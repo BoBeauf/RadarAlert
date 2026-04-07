@@ -1,0 +1,20 @@
+# Gradle
+.gradle/
+build/
+app/build/
+
+# Local properties (contient le chemin SDK, ne pas partager)
+local.properties
+
+# Android Studio
+*.iml
+.idea/
+*.idea/
+
+# Keystore (ne JAMAIS committer)
+*.jks
+*.keystore
+
+# OS
+.DS_Store
+Thumbs.db
