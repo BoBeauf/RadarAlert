@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Thème de base requis par Android, remplacé par Compose au runtime -->
+    <style name="Theme.RadarAlert" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>

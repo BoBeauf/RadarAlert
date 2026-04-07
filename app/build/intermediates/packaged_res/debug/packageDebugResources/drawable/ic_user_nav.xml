@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Ombre portée -->
+    <path
+        android:fillColor="#33000000"
+        android:pathData="M12,4 L22,21 L12,17.5 L2,21 Z"
+        android:translateY="1"/>
+
+    <!-- Flèche bleue foncée (contour) -->
+    <path
+        android:fillColor="#1565C0"
+        android:pathData="M12,2 L22,21 L12,17 L2,21 Z"/>
+
+    <!-- Flèche bleue claire (remplissage) -->
+    <path
+        android:fillColor="#42A5F5"
+        android:pathData="M12,4.5 L20,19.5 L12,15.8 L4,19.5 Z"/>
+
+    <!-- Liseré blanc central -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.5"
+        android:pathData="M12,7 L15.5,17 L12,14.5 L8.5,17 Z"/>
+
+</vector>

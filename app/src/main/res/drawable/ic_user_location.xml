@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Disque bleu extérieur -->
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M12,2m-10,0a10,10 0,1 0,20 0a10,10 0,1 0,-20 0"/>
+
+    <!-- Disque blanc intérieur -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,12m-4,0a4,4 0,1 0,8 0a4,4 0,1 0,-8 0"/>
+
+</vector>
