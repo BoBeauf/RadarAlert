@@ -24,9 +24,9 @@ import requests
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
-GOV_CSV_URL   = "https://www.data.gouv.fr/api/1/datasets/r/8a22b5a8-4b65-41be-891a-7c0aead4ba51"
-SR_BASE_URL   = "https://radars.securite-routiere.gouv.fr"
-OVERPASS_URL  = "https://overpass-api.de/api/interpreter"
+GOV_CSV_URL    = "https://www.data.gouv.fr/api/1/datasets/r/8a22b5a8-4b65-41be-891a-7c0aead4ba51"
+SR_BASE_URL    = "https://radars.securite-routiere.gouv.fr"
+OVERPASS_URL   = "https://overpass-api.de/api/interpreter"
 OVERPASS_QUERY = '[out:json][timeout:360];node["highway"="speed_camera"](35.0,-11.0,72.0,45.0);out body;'
 
 SR_MAX_CONCURRENT = 5
@@ -43,30 +43,40 @@ def make_hash(*values) -> str:
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
+def log(source: str, msg: str):
+    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    print(f"[{ts}] [{source}] {msg}", flush=True)
+
 
 # ── Source GOV (data.gouv.fr) ─────────────────────────────────
 
 def fetch_gov() -> list[dict]:
-    print("Fetching data.gouv.fr CSV...")
+    log("GOV", "Téléchargement du CSV data.gouv.fr...")
+    t0 = time.time()
     resp = requests.get(GOV_CSV_URL, timeout=60, allow_redirects=True)
     resp.raise_for_status()
+    log("GOV", f"CSV reçu ({len(resp.content) // 1024} KB) — parsing...")
 
     radars = []
+    skipped = 0
     reader = csv.reader(StringIO(resp.text))
     next(reader)  # skip header
 
     for fields in reader:
         if len(fields) < 15:
+            skipped += 1
             continue
         try:
             lat       = float(fields[3])
             lng       = float(fields[4])
             source_id = int(fields[5])
         except (ValueError, IndexError):
+            skipped += 1
             continue
 
         # Validation coordonnées France métropolitaine + DOM-TOM
         if not (-21.4 <= lat <= 51.2 and -62.0 <= lng <= 55.9):
+            skipped += 1
             continue
 
         speed_car = int(fields[14].strip()) if fields[14].strip().isdigit() else None
@@ -95,7 +105,7 @@ def fetch_gov() -> list[dict]:
         )
         radars.append(radar)
 
-    print(f"  → {len(radars)} radars (gov)")
+    log("GOV", f"Terminé en {time.time() - t0:.1f}s — {len(radars)} radars ({skipped} ignorés)")
     return radars
 
 
@@ -134,7 +144,8 @@ def fetch_sr_detail(session: requests.Session, raw_id: str) -> dict | None:
     return None
 
 def fetch_sr() -> list[dict]:
-    print("Fetching securite-routiere.gouv.fr...")
+    log("SR", "Connexion à securite-routiere.gouv.fr...")
+    t0 = time.time()
     session = requests.Session()
     session.headers.update({
         "Accept":     "application/json",
@@ -150,12 +161,14 @@ def fetch_sr() -> list[dict]:
             basic_list = resp.json()
             break
         except Exception as e:
-            print(f"  /radars/all tentative {attempt}/{SR_RETRIES} échouée : {e}")
+            log("SR", f"  /radars/all tentative {attempt}/{SR_RETRIES} échouée : {e}")
             if attempt < SR_RETRIES:
                 time.sleep(2 * attempt)
     if basic_list is None:
         raise RuntimeError("Impossible de récupérer /radars/all après plusieurs tentatives")
-    print(f"  → {len(basic_list)} radars dans la liste de base")
+
+    total = len(basic_list)
+    log("SR", f"{total} radars dans la liste — fetch des détails ({SR_MAX_CONCURRENT} workers)...")
 
     def process_one(basic: dict) -> dict | None:
         raw_id = basic.get("id", "")
@@ -180,12 +193,12 @@ def fetch_sr() -> list[dict]:
                     try: speed_hgv = int(mname[len("vitesse_pl_"):])
                     except ValueError: pass
 
-            troncon    = detail.get("radartronconkm", "")
-            section_km = troncon.replace(",", ".").strip() if isinstance(troncon, str) else ""
-            department = detail.get("department", "")
-            route      = detail.get("radarroad", "")
-            direction  = detail.get("radardirection", "")
-            equipment  = detail.get("radarequipment", "")
+            troncon      = detail.get("radartronconkm", "")
+            section_km   = troncon.replace(",", ".").strip() if isinstance(troncon, str) else ""
+            department   = detail.get("department", "")
+            route        = detail.get("radarroad", "")
+            direction    = detail.get("radardirection", "")
+            equipment    = detail.get("radarequipment", "")
             install_date = detail.get("radarinstalldate", "")
 
         radar = {
@@ -210,6 +223,7 @@ def fetch_sr() -> list[dict]:
         return radar
 
     radars = []
+    failed = 0
     with ThreadPoolExecutor(max_workers=SR_MAX_CONCURRENT) as executor:
         futures = {executor.submit(process_one, b): b for b in basic_list}
         done = 0
@@ -217,23 +231,30 @@ def fetch_sr() -> list[dict]:
             result = future.result()
             if result:
                 radars.append(result)
+            else:
+                failed += 1
             done += 1
-            if done % 1000 == 0:
-                print(f"  SR progress: {done}/{len(basic_list)}")
+            if done % 500 == 0:
+                pct = done * 100 // total
+                log("SR", f"  {done}/{total} ({pct}%) — {failed} échecs")
 
-    print(f"  → {len(radars)} radars (sr)")
+    log("SR", f"Terminé en {time.time() - t0:.1f}s — {len(radars)} radars ({failed} échecs détail)")
     return radars
 
 
 # ── Source OSM (OpenStreetMap / Overpass) ─────────────────────
 
 def fetch_osm() -> list[dict]:
-    print("Fetching OpenStreetMap via Overpass...")
+    log("OSM", "Requête Overpass (Europe entière, peut prendre 2-3 min)...")
+    t0 = time.time()
     resp = requests.post(OVERPASS_URL, data={"data": OVERPASS_QUERY}, timeout=420)
     resp.raise_for_status()
 
+    elements = resp.json().get("elements", [])
+    log("OSM", f"Réponse reçue ({len(resp.content) // 1024} KB) — {len(elements)} nœuds — parsing...")
+
     radars = []
-    for node in resp.json().get("elements", []):
+    for node in elements:
         lat    = node.get("lat")
         lng    = node.get("lon")
         osm_id = node.get("id")
@@ -255,9 +276,9 @@ def fetch_osm() -> list[dict]:
         hgv_str   = tags.get("maxspeed:hgv", "")
         speed_hgv = int(hgv_str) if hgv_str.isdigit() else None
 
-        name  = tags.get("name", "")
-        city  = name if name else tags.get("addr:city", "")
-        route = tags.get("ref", "")
+        name      = tags.get("name", "")
+        city      = name if name else tags.get("addr:city", "")
+        route     = tags.get("ref", "")
         direction = tags.get("direction", "")
 
         radar = {
@@ -274,7 +295,7 @@ def fetch_osm() -> list[dict]:
         radar["data_hash"] = make_hash(lat, lng, radar_type, speed, speed_hgv, city, route, direction)
         radars.append(radar)
 
-    print(f"  → {len(radars)} radars (osm)")
+    log("OSM", f"Terminé en {time.time() - t0:.1f}s — {len(radars)} radars")
     return radars
 
 
@@ -321,7 +342,8 @@ def upsert_to_supabase(db: SupabaseRest, table: str, new_data: list[dict], id_fi
     - fetched_at : toujours mis à jour
     - changed_at : mis à jour seulement si le hash a changé
     """
-    print(f"\nSync {table} ({len(new_data)} radars)...")
+    log("DB", f"Sync {table} — {len(new_data)} radars à traiter")
+    t0  = time.time()
     now = now_iso()
 
     # 1. Récupérer les hashes et changed_at existants (pagination)
@@ -335,7 +357,7 @@ def upsert_to_supabase(db: SupabaseRest, table: str, new_data: list[dict], id_fi
             break
         offset += 1000
 
-    print(f"  {len(existing)} enregistrements existants en base")
+    log("DB", f"  {len(existing)} enregistrements existants en base")
 
     # 2. Construire le payload : conserver changed_at si le contenu n'a pas changé
     to_upsert = []
@@ -354,23 +376,28 @@ def upsert_to_supabase(db: SupabaseRest, table: str, new_data: list[dict], id_fi
             unchanged_count += 1
         to_upsert.append({**row, "fetched_at": now, "changed_at": changed_at})
 
-    print(f"  nouveaux: {new_count} | modifiés: {changed_count} | inchangés: {unchanged_count}")
+    log("DB", f"  nouveaux: {new_count} | modifiés: {changed_count} | inchangés: {unchanged_count}")
 
     # 3. Upsert par batches
     total_batches = (len(to_upsert) - 1) // BATCH_SIZE + 1
     for i in range(0, len(to_upsert), BATCH_SIZE):
         db.upsert(table, to_upsert[i:i + BATCH_SIZE])
-        print(f"  batch {i // BATCH_SIZE + 1}/{total_batches} ✓")
+        batch_num = i // BATCH_SIZE + 1
+        if batch_num % 10 == 0 or batch_num == total_batches:
+            log("DB", f"  {table} : batch {batch_num}/{total_batches}")
 
-    print(f"  → {table} sync terminé")
+    log("DB", f"  {table} sync OK en {time.time() - t0:.1f}s")
 
 
 # ── Main ──────────────────────────────────────────────────────
 
 def main():
+    t_start = time.time()
+    log("MAIN", "Démarrage du pipeline RadarAlert")
     db = SupabaseRest(SUPABASE_URL, SUPABASE_KEY)
 
     # Fetch des 3 sources en parallèle (SR et OSM sont les plus lents)
+    log("MAIN", "Fetch des 3 sources en parallèle...")
     with ThreadPoolExecutor(max_workers=3) as executor:
         future_gov = executor.submit(fetch_gov)
         future_sr  = executor.submit(fetch_sr)
@@ -379,11 +406,14 @@ def main():
         sr_data  = future_sr.result()
         osm_data = future_osm.result()
 
+    total = len(gov_data) + len(sr_data) + len(osm_data)
+    log("MAIN", f"Fetch terminé — {total} radars au total (gov:{len(gov_data)} sr:{len(sr_data)} osm:{len(osm_data)})")
+
     upsert_to_supabase(db, "raw_gov", gov_data, "source_id")
     upsert_to_supabase(db, "raw_sr",  sr_data,  "source_id")
     upsert_to_supabase(db, "raw_osm", osm_data, "source_id")
 
-    print("\nTout est synchronisé ✓")
+    log("MAIN", f"Pipeline terminé en {time.time() - t_start:.1f}s")
 
 
 if __name__ == "__main__":
