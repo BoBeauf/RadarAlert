@@ -1,0 +1,30 @@
+name: Fetch radar data
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # tous les jours à 3h UTC
+  workflow_dispatch:        # déclenchement manuel possible
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      SUPABASE_URL: https://vqnwdsbuxknforoekziw.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Fetch & sync radars
+        run: python scripts/fetch_radars.py
