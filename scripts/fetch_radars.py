@@ -224,6 +224,7 @@ def fetch_sr() -> list[dict]:
 
     radars = []
     failed = 0
+    t_sr = time.time()
     with ThreadPoolExecutor(max_workers=SR_MAX_CONCURRENT) as executor:
         futures = {executor.submit(process_one, b): b for b in basic_list}
         done = 0
@@ -234,9 +235,12 @@ def fetch_sr() -> list[dict]:
             else:
                 failed += 1
             done += 1
-            if done % 500 == 0:
+            if done % 100 == 0:
+                elapsed = time.time() - t_sr
+                rate = done / elapsed
+                eta = (total - done) / rate if rate > 0 else 0
                 pct = done * 100 // total
-                log("SR", f"  {done}/{total} ({pct}%) — {failed} échecs")
+                log("SR", f"  {done}/{total} ({pct}%) — {failed} échecs — {rate:.1f} req/s — ETA {eta:.0f}s")
 
     log("SR", f"Terminé en {time.time() - t0:.1f}s — {len(radars)} radars ({failed} échecs détail)")
     return radars
