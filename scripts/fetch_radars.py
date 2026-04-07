@@ -29,7 +29,7 @@ SR_BASE_URL    = "https://radars.securite-routiere.gouv.fr"
 OVERPASS_URL   = "https://overpass-api.de/api/interpreter"
 OVERPASS_QUERY = '[out:json][timeout:360];node["highway"="speed_camera"](35.0,-11.0,72.0,45.0);out body;'
 
-SR_MAX_CONCURRENT = 5
+SR_MAX_CONCURRENT = 10
 SR_RETRIES        = 3
 BATCH_SIZE        = 500
 
