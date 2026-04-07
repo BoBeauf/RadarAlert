@@ -326,9 +326,14 @@ def upsert_to_supabase(supabase, table: str, new_data: list[dict], id_field: str
 def main():
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    gov_data = fetch_gov()
-    sr_data  = fetch_sr()
-    osm_data = fetch_osm()
+    # Fetch des 3 sources en parallèle (SR et OSM sont les plus lents)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_gov = executor.submit(fetch_gov)
+        future_sr  = executor.submit(fetch_sr)
+        future_osm = executor.submit(fetch_osm)
+        gov_data = future_gov.result()
+        sr_data  = future_sr.result()
+        osm_data = future_osm.result()
 
     upsert_to_supabase(supabase, "raw_gov", gov_data, "source_id")
     upsert_to_supabase(supabase, "raw_sr",  sr_data,  "source_id")
