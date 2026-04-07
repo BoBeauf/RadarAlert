@@ -18,7 +18,6 @@ from datetime import datetime, timezone
 from io import StringIO
 
 import requests
-from supabase import create_client
 
 # ── Config ────────────────────────────────────────────────────
 
@@ -265,9 +264,44 @@ def fetch_osm() -> list[dict]:
     return radars
 
 
+# ── Client Supabase REST (sans SDK) ──────────────────────────
+
+class SupabaseRest:
+    """
+    Client REST minimal pour Supabase — compatible avec tous les formats de clé
+    (JWT service_role eyJ... ou Secret key sbsec_...).
+    """
+    def __init__(self, url: str, key: str):
+        self.base = f"{url}/rest/v1"
+        self.session = requests.Session()
+        self.session.headers.update({
+            "apikey":        key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type":  "application/json",
+        })
+
+    def select(self, table: str, columns: str, limit: int = 1000, offset: int = 0) -> list[dict]:
+        resp = self.session.get(
+            f"{self.base}/{table}",
+            params={"select": columns, "limit": limit, "offset": offset},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def upsert(self, table: str, rows: list[dict]) -> None:
+        resp = self.session.post(
+            f"{self.base}/{table}",
+            json=rows,
+            headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+            timeout=60,
+        )
+        resp.raise_for_status()
+
+
 # ── Upsert Supabase ───────────────────────────────────────────
 
-def upsert_to_supabase(supabase, table: str, new_data: list[dict], id_field: str):
+def upsert_to_supabase(db: SupabaseRest, table: str, new_data: list[dict], id_field: str):
     """
     Upsert tous les radars.
     - fetched_at : toujours mis à jour
@@ -280,22 +314,17 @@ def upsert_to_supabase(supabase, table: str, new_data: list[dict], id_field: str
     existing: dict[str, dict] = {}
     offset = 0
     while True:
-        result = (
-            supabase.table(table)
-            .select(f"{id_field},data_hash,changed_at")
-            .range(offset, offset + 999)
-            .execute()
-        )
-        for row in result.data:
+        rows = db.select(table, f"{id_field},data_hash,changed_at", limit=1000, offset=offset)
+        for row in rows:
             existing[row[id_field]] = {"hash": row["data_hash"], "changed_at": row["changed_at"]}
-        if len(result.data) < 1000:
+        if len(rows) < 1000:
             break
         offset += 1000
 
     print(f"  {len(existing)} enregistrements existants en base")
 
     # 2. Construire le payload : conserver changed_at si le contenu n'a pas changé
-    rows = []
+    to_upsert = []
     new_count = changed_count = unchanged_count = 0
     for row in new_data:
         sid  = row[id_field]
@@ -309,14 +338,15 @@ def upsert_to_supabase(supabase, table: str, new_data: list[dict], id_field: str
         else:
             changed_at = prev["changed_at"]
             unchanged_count += 1
-        rows.append({**row, "fetched_at": now, "changed_at": changed_at})
+        to_upsert.append({**row, "fetched_at": now, "changed_at": changed_at})
 
     print(f"  nouveaux: {new_count} | modifiés: {changed_count} | inchangés: {unchanged_count}")
 
     # 3. Upsert par batches
-    for i in range(0, len(rows), BATCH_SIZE):
-        supabase.table(table).upsert(rows[i:i + BATCH_SIZE]).execute()
-        print(f"  batch {i // BATCH_SIZE + 1}/{(len(rows) - 1) // BATCH_SIZE + 1} ✓")
+    total_batches = (len(to_upsert) - 1) // BATCH_SIZE + 1
+    for i in range(0, len(to_upsert), BATCH_SIZE):
+        db.upsert(table, to_upsert[i:i + BATCH_SIZE])
+        print(f"  batch {i // BATCH_SIZE + 1}/{total_batches} ✓")
 
     print(f"  → {table} sync terminé")
 
@@ -324,7 +354,7 @@ def upsert_to_supabase(supabase, table: str, new_data: list[dict], id_field: str
 # ── Main ──────────────────────────────────────────────────────
 
 def main():
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    db = SupabaseRest(SUPABASE_URL, SUPABASE_KEY)
 
     # Fetch des 3 sources en parallèle (SR et OSM sont les plus lents)
     with ThreadPoolExecutor(max_workers=3) as executor:
@@ -335,9 +365,9 @@ def main():
         sr_data  = future_sr.result()
         osm_data = future_osm.result()
 
-    upsert_to_supabase(supabase, "raw_gov", gov_data, "source_id")
-    upsert_to_supabase(supabase, "raw_sr",  sr_data,  "source_id")
-    upsert_to_supabase(supabase, "raw_osm", osm_data, "source_id")
+    upsert_to_supabase(db, "raw_gov", gov_data, "source_id")
+    upsert_to_supabase(db, "raw_sr",  sr_data,  "source_id")
+    upsert_to_supabase(db, "raw_osm", osm_data, "source_id")
 
     print("\nTout est synchronisé ✓")
 
