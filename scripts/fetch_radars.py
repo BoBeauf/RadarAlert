@@ -136,11 +136,25 @@ def fetch_sr_detail(session: requests.Session, raw_id: str) -> dict | None:
 def fetch_sr() -> list[dict]:
     print("Fetching securite-routiere.gouv.fr...")
     session = requests.Session()
-    session.headers.update({"Accept": "application/json"})
+    session.headers.update({
+        "Accept":     "application/json",
+        "User-Agent": "Mozilla/5.0 (compatible; RadarAlert/1.0)",
+    })
 
-    resp = session.get(f"{SR_BASE_URL}/radars/all", timeout=30)
-    resp.raise_for_status()
-    basic_list = resp.json()
+    # /radars/all : retry car le serveur est fragile
+    basic_list = None
+    for attempt in range(1, SR_RETRIES + 1):
+        try:
+            resp = session.get(f"{SR_BASE_URL}/radars/all", timeout=30)
+            resp.raise_for_status()
+            basic_list = resp.json()
+            break
+        except Exception as e:
+            print(f"  /radars/all tentative {attempt}/{SR_RETRIES} échouée : {e}")
+            if attempt < SR_RETRIES:
+                time.sleep(2 * attempt)
+    if basic_list is None:
+        raise RuntimeError("Impossible de récupérer /radars/all après plusieurs tentatives")
     print(f"  → {len(basic_list)} radars dans la liste de base")
 
     def process_one(basic: dict) -> dict | None:
