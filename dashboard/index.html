@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RadarAlert — Audit Dashboard</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- MarkerCluster -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <style>
+    :root {
+      --bg:      #0f1117;
+      --surface: #1a1d24;
+      --card:    #1e2130;
+      --border:  #2a2d3a;
+      --text:    #e2e8f0;
+      --muted:   #6b7280;
+      --gov:     #4a90d9;
+      --sr:      #e8832a;
+      --osm:     #5bb55b;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ─────────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 16px;
+      height: 46px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+      z-index: 10;
+    }
+
+    .logo { font-size: 14px; font-weight: 700; white-space: nowrap; }
+    .logo span { color: var(--muted); font-weight: 400; font-size: 13px; }
+
+    .source-toggles { display: flex; gap: 6px; margin-left: auto; }
+
+    .toggle-btn {
+      padding: 4px 14px;
+      border-radius: 20px;
+      border: 1.5px solid;
+      background: transparent;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      transition: background 0.15s, color 0.15s;
+    }
+    .toggle-btn.gov        { color: var(--gov); border-color: var(--gov); }
+    .toggle-btn.sr         { color: var(--sr);  border-color: var(--sr);  }
+    .toggle-btn.osm        { color: var(--osm); border-color: var(--osm); }
+    .toggle-btn.active.gov { background: var(--gov); color: #fff; }
+    .toggle-btn.active.sr  { background: var(--sr);  color: #fff; }
+    .toggle-btn.active.osm { background: var(--osm); color: #fff; }
+
+    /* ── Layout ─────────────────────────────────────── */
+    .main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Sidebar ─────────────────────────────────────── */
+    #sidebar {
+      width: 272px;
+      min-width: 272px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      padding: 14px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    #sidebar::-webkit-scrollbar { width: 4px; }
+    #sidebar::-webkit-scrollbar-track { background: transparent; }
+    #sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    .section-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    /* ── Stat cards ─────────────────────────────────── */
+    .stat-cards { display: flex; flex-direction: column; gap: 5px; }
+
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 11px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .stat-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+    .stat-info { flex: 1; min-width: 0; }
+    .stat-source-label { font-size: 10px; color: var(--muted); margin-bottom: 1px; }
+    .stat-count { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+    .stat-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
+
+    /* ── Coverage table ─────────────────────────────── */
+    .cov-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+    .cov-table th {
+      padding: 4px 4px 6px;
+      font-weight: 600;
+      font-size: 10px;
+      color: var(--muted);
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+    }
+    .cov-table th:first-child { text-align: left; }
+    .cov-table td {
+      padding: 4px 4px;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+    }
+    .cov-table td:first-child { text-align: left; color: var(--muted); }
+    .cov-table tr:last-child td { border-bottom: none; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 18px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .badge-high { background: rgba(91,181,91,0.18); color: #5bb55b; }
+    .badge-mid  { background: rgba(232,131,42,0.18); color: #e8832a; }
+    .badge-low  { background: rgba(220,70,70,0.18);  color: #dc4646; }
+    .badge-na   { background: transparent; color: var(--border); font-weight: 400; }
+
+    /* ── Type distribution ──────────────────────────── */
+    .type-rows { display: flex; flex-direction: column; gap: 5px; }
+    .type-row { display: flex; align-items: center; gap: 6px; }
+    .type-label {
+      width: 130px;
+      min-width: 130px;
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .type-bar-wrap { flex: 1; background: var(--border); border-radius: 3px; height: 5px; position: relative; }
+    .type-bar { position: absolute; top: 0; left: 0; height: 100%; border-radius: 3px; }
+    .type-count { width: 36px; text-align: right; font-size: 11px; font-variant-numeric: tabular-nums; }
+
+    /* ── Freshness ───────────────────────────────────── */
+    .fresh-rows { display: flex; flex-direction: column; gap: 8px; }
+    .fresh-row { font-size: 11px; }
+    .fresh-row .src-name { font-weight: 600; font-size: 11px; margin-bottom: 2px; }
+    .fresh-row .dates { color: var(--muted); line-height: 1.6; }
+
+    /* ── Map ─────────────────────────────────────────── */
+    #map { flex: 1; }
+
+    /* ── Status bar ─────────────────────────────────── */
+    .statusbar {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 4px 14px;
+      height: 26px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      font-size: 11px;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .statusbar span { color: var(--text); }
+
+    /* ── Loader ──────────────────────────────────────── */
+    #loader {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 17, 23, 0.92);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      z-index: 9999;
+    }
+
+    .spinner {
+      width: 34px; height: 34px;
+      border: 3px solid var(--border);
+      border-top-color: var(--gov);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #loader-msg { font-size: 13px; color: var(--muted); }
+
+    .setup-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      max-width: 420px;
+      text-align: left;
+      line-height: 1.6;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .setup-box code { color: var(--gov); font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+    .setup-box .key { color: var(--sr); }
+
+    /* ── Radar popup ─────────────────────────────────── */
+    .radar-popup { min-width: 200px; font-size: 12px; }
+    .radar-popup .src-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .radar-popup table { width: 100%; border-collapse: collapse; }
+    .radar-popup td { padding: 2px 0; vertical-align: top; }
+    .radar-popup td:first-child { color: #888; padding-right: 10px; white-space: nowrap; }
+    .radar-popup .null-val { color: #444; }
+
+    .loading-text { color: var(--muted); font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+
+<!-- Loader overlay -->
+<div id="loader">
+  <div class="spinner"></div>
+  <div id="loader-msg">Connexion à Supabase…</div>
+</div>
+
+<!-- Header -->
+<header>
+  <div class="logo">RadarAlert <span>/ Audit Dashboard</span></div>
+  <div class="source-toggles">
+    <button class="toggle-btn gov active" data-source="gov">GOV</button>
+    <button class="toggle-btn sr  active" data-source="sr">SR</button>
+    <button class="toggle-btn osm active" data-source="osm">OSM</button>
+  </div>
+</header>
+
+<div class="main">
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+
+    <!-- Counts -->
+    <div>
+      <div class="section-title">Sources</div>
+      <div class="stat-cards">
+        <div class="stat-card">
+          <div class="stat-dot" style="background:var(--gov)"></div>
+          <div class="stat-info">
+            <div class="stat-source-label">data.gouv.fr</div>
+            <div class="stat-count" id="count-gov">—</div>
+            <div class="stat-sub"  id="sub-gov">—</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-dot" style="background:var(--sr)"></div>
+          <div class="stat-info">
+            <div class="stat-source-label">securite-routiere.gouv.fr</div>
+            <div class="stat-count" id="count-sr">—</div>
+            <div class="stat-sub"  id="sub-sr">—</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-dot" style="background:var(--osm)"></div>
+          <div class="stat-info">
+            <div class="stat-source-label">OpenStreetMap</div>
+            <div class="stat-count" id="count-osm">—</div>
+            <div class="stat-sub"  id="sub-osm">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Field coverage -->
+    <div>
+      <div class="section-title">Couverture des champs</div>
+      <table class="cov-table">
+        <thead>
+          <tr>
+            <th>Champ</th>
+            <th style="color:var(--gov)">GOV</th>
+            <th style="color:var(--sr)">SR</th>
+            <th style="color:var(--osm)">OSM</th>
+          </tr>
+        </thead>
+        <tbody id="cov-body">
+          <tr><td colspan="4" class="loading-text" style="padding:8px 0">Chargement…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Type distribution -->
+    <div>
+      <div class="section-title">Types de radars</div>
+      <div class="type-rows" id="type-rows">
+        <div class="loading-text">Chargement…</div>
+      </div>
+    </div>
+
+    <!-- Freshness -->
+    <div>
+      <div class="section-title">Fraîcheur des données</div>
+      <div class="fresh-rows" id="fresh-rows">
+        <div class="loading-text">Chargement…</div>
+      </div>
+    </div>
+
+  </div><!-- /sidebar -->
+
+  <div id="map"></div>
+
+</div><!-- /main -->
+
+<!-- Status bar -->
+<div class="statusbar">
+  <div>Zoom&nbsp;: <span id="st-zoom">—</span></div>
+  <div>Sur la carte&nbsp;: <span id="st-markers">—</span></div>
+  <div id="st-msg" style="margin-left:auto"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════
+//  CONFIG ← renseigne ta clé ici
+// ═══════════════════════════════════════════════════
+const SUPABASE_URL = 'https://vqnwdsbuxknforoekziw.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_Yw4Lx_La7OXgwe6ZJAyVTA_gkxObKuG';   // ← anon key ou service_role key (Supabase → Project Settings → API)
+
+// ═══════════════════════════════════════════════════
+//  Constants
+// ═══════════════════════════════════════════════════
+const COLORS  = { gov: '#4a90d9', sr: '#e8832a', osm: '#5bb55b' };
+const SOURCES = {
+  gov: { table: 'raw_gov', label: 'GOV',  color: COLORS.gov },
+  sr:  { table: 'raw_sr',  label: 'SR',   color: COLORS.sr  },
+  osm: { table: 'raw_osm', label: 'OSM',  color: COLORS.osm },
+};
+
+// Fields to audit — null means this source doesn't have the column
+const AUDIT_FIELDS = [
+  { label: 'Vitesse VL',    gov: 'speed_car',         sr: 'speed_car',         osm: 'speed_limit'      },
+  { label: 'Vitesse PL',    gov: 'speed_hgv',         sr: 'speed_hgv',         osm: 'speed_limit_hgv'  },
+  { label: 'Type',          gov: 'type',               sr: 'type',              osm: 'type'              },
+  { label: 'Direction',     gov: 'direction',          sr: 'direction',         osm: 'direction'         },
+  { label: 'Département',   gov: 'department',         sr: 'department',        osm: null                },
+  { label: 'Commune',       gov: 'city',               sr: null,                osm: 'city'              },
+  { label: 'Route',         gov: 'route',              sr: 'route',             osm: 'route'             },
+  { label: 'Équipement',    gov: 'equipment',          sr: 'equipment',         osm: null                },
+  { label: 'Date install.', gov: 'install_date',       sr: 'install_date',      osm: null                },
+  { label: 'Tronçon km',    gov: 'section_length_km',  sr: 'section_length_km', osm: null               },
+];
+
+const MIN_ZOOM     = 6;
+const MAX_PER_SRC  = 3000;
+const LOAD_DEBOUNCE_MS = 450;
+
+// ═══════════════════════════════════════════════════
+//  Supabase REST helpers
+// ═══════════════════════════════════════════════════
+const SB_HEADERS = {
+  'apikey':        SUPABASE_KEY,
+  'Authorization': `Bearer ${SUPABASE_KEY}`,
+};
+
+async function sbFetch(path, extraHeaders = {}) {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: { ...SB_HEADERS, ...extraHeaders },
+  });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    throw new Error(`Supabase ${resp.status}: ${body.slice(0, 200)}`);
+  }
+  return resp;
+}
+
+async function sbCount(table, filter = '') {
+  const q = filter ? `${table}?${filter}` : `${table}?select=*`;
+  const resp = await sbFetch(q, { 'Prefer': 'count=exact', 'Range': '0-0' });
+  const range = resp.headers.get('content-range') || '0/0';
+  return parseInt(range.split('/')[1]) || 0;
+}
+
+async function sbSelect(table, params) {
+  const resp = await sbFetch(`${table}?${params}`);
+  return resp.json();
+}
+
+// ═══════════════════════════════════════════════════
+//  Map
+// ═══════════════════════════════════════════════════
+const map = L.map('map', { zoomControl: true }).setView([46.6, 2.4], 6);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap contributors, © CartoDB',
+  maxZoom: 19,
+}).addTo(map);
+
+// One cluster layer per source
+const clusterLayers = {
+  gov: L.markerClusterGroup({ maxClusterRadius: 40, chunkedLoading: true, disableClusteringAtZoom: 14 }),
+  sr:  L.markerClusterGroup({ maxClusterRadius: 40, chunkedLoading: true, disableClusteringAtZoom: 14 }),
+  osm: L.markerClusterGroup({ maxClusterRadius: 40, chunkedLoading: true, disableClusteringAtZoom: 14 }),
+};
+Object.values(clusterLayers).forEach(l => map.addLayer(l));
+
+const visible = { gov: true, sr: true, osm: true };
+
+function makeDotIcon(color) {
+  return L.divIcon({
+    className: '',
+    html: `<svg width="12" height="12" viewBox="0 0 12 12" xmlns="http://www.w3.org/2000/svg">
+             <circle cx="6" cy="6" r="5" fill="${color}" stroke="rgba(0,0,0,0.4)" stroke-width="1"/>
+           </svg>`,
+    iconSize:   [12, 12],
+    iconAnchor: [6, 6],
+    popupAnchor: [0, -6],
+  });
+}
+
+function nullVal(v) {
+  if (v === null || v === undefined || v === '') return `<span class="null-val">—</span>`;
+  return String(v);
+}
+
+function buildPopup(source, row) {
+  const { label, color } = SOURCES[source];
+  const rows = source === 'osm'
+    ? [
+        ['ID OSM',      row.source_id],
+        ['Type',        row.type],
+        ['Vitesse VL',  row.speed_limit     ? row.speed_limit     + ' km/h' : null],
+        ['Vitesse PL',  row.speed_limit_hgv ? row.speed_limit_hgv + ' km/h' : null],
+        ['Commune',     row.city],
+        ['Route',       row.route],
+        ['Direction',   row.direction],
+      ]
+    : [
+        ['ID',           row.source_id],
+        ['Type',         row.type],
+        ['Vitesse VL',   row.speed_car  ? row.speed_car  + ' km/h' : null],
+        ['Vitesse PL',   row.speed_hgv  ? row.speed_hgv  + ' km/h' : null],
+        ['Département',  row.department],
+        ['Commune',      row.city],
+        ['Route',        row.route],
+        ['Direction',    row.direction],
+        ['Équipement',   row.equipment],
+        ['Date install.',row.install_date],
+        ['Tronçon',      row.section_length_km ? row.section_length_km + ' km' : null],
+      ];
+
+  // Hide city for SR (not in schema), keep others
+  const filtered = source === 'sr' ? rows.filter(([k]) => k !== 'Commune') : rows;
+
+  return `<div class="radar-popup">
+    <div class="src-badge" style="background:${color}22;color:${color}">${label}</div>
+    <table>${filtered.map(([k, v]) => `<tr><td>${k}</td><td>${nullVal(v)}</td></tr>`).join('')}</table>
+  </div>`;
+}
+
+async function loadSourceInBounds(source, bounds) {
+  if (!visible[source]) return 0;
+  const { table } = SOURCES[source];
+  const s = bounds.getSouth().toFixed(5);
+  const n = bounds.getNorth().toFixed(5);
+  const w = bounds.getWest().toFixed(5);
+  const e = bounds.getEast().toFixed(5);
+
+  const select = source === 'osm'
+    ? 'source_id,lat,lng,type,speed_limit,speed_limit_hgv,city,route,direction'
+    : source === 'sr'
+    ? 'source_id,lat,lng,type,speed_car,speed_hgv,department,route,direction,equipment,install_date,section_length_km'
+    : 'source_id,lat,lng,type,speed_car,speed_hgv,department,city,route,direction,equipment,install_date,section_length_km';
+
+  const params = `select=${select}&lat=gte.${s}&lat=lte.${n}&lng=gte.${w}&lng=lte.${e}&limit=${MAX_PER_SRC}`;
+  const rows   = await sbSelect(table, params);
+
+  clusterLayers[source].clearLayers();
+  const icon    = makeDotIcon(COLORS[source]);
+  const markers = rows.map(row => {
+    const m = L.marker([row.lat, row.lng], { icon });
+    m.bindPopup(() => buildPopup(source, row), { maxWidth: 300 });
+    return m;
+  });
+  clusterLayers[source].addLayers(markers);
+  return rows.length;
+}
+
+let loadTimer = null;
+let loadBusy  = false;
+
+async function refreshMap() {
+  const zoom = map.getZoom();
+  document.getElementById('st-zoom').textContent = zoom;
+
+  if (zoom < MIN_ZOOM) {
+    document.getElementById('st-msg').textContent = `Zoom ≥ ${MIN_ZOOM} pour charger les radars`;
+    return;
+  }
+
+  clearTimeout(loadTimer);
+  loadTimer = setTimeout(async () => {
+    if (loadBusy) return;
+    loadBusy = true;
+    document.getElementById('st-msg').textContent = 'Chargement…';
+
+    const bounds = map.getBounds().pad(0.08);
+    try {
+      const counts = await Promise.all(['gov','sr','osm'].map(s => loadSourceInBounds(s, bounds)));
+      const total  = counts.reduce((a, b) => a + b, 0);
+      document.getElementById('st-markers').textContent = total.toLocaleString('fr');
+      const capped = counts.some(c => c >= MAX_PER_SRC);
+      document.getElementById('st-msg').textContent = capped
+        ? `⚠ Limite ${MAX_PER_SRC}/source atteinte — zoom in pour plus`
+        : '';
+    } catch (err) {
+      document.getElementById('st-msg').textContent = '❌ ' + err.message;
+    }
+    loadBusy = false;
+  }, LOAD_DEBOUNCE_MS);
+}
+
+map.on('moveend zoomend', refreshMap);
+
+// ═══════════════════════════════════════════════════
+//  Source toggle buttons
+// ═══════════════════════════════════════════════════
+document.querySelectorAll('.toggle-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const src = btn.dataset.source;
+    visible[src] = !visible[src];
+    btn.classList.toggle('active', visible[src]);
+    if (visible[src]) map.addLayer(clusterLayers[src]);
+    else              map.removeLayer(clusterLayers[src]);
+    // Update marker count
+    let total = 0;
+    for (const [s, l] of Object.entries(clusterLayers)) if (visible[s]) total += l.getLayers().length;
+    document.getElementById('st-markers').textContent = total.toLocaleString('fr');
+  });
+});
+
+// ═══════════════════════════════════════════════════
+//  Formatting helpers
+// ═══════════════════════════════════════════════════
+const fmt  = n => (n ?? 0).toLocaleString('fr');
+const pct  = (a, b) => b > 0 ? Math.round(a * 100 / b) : 0;
+
+function badgeHtml(p) {
+  if (p < 0) return `<span class="badge badge-na">N/A</span>`;
+  const cls = p >= 80 ? 'badge-high' : p >= 25 ? 'badge-mid' : 'badge-low';
+  return `<span class="badge ${cls}">${p}%</span>`;
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('fr-FR', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+// ═══════════════════════════════════════════════════
+//  Load stats
+// ═══════════════════════════════════════════════════
+function setMsg(msg) { document.getElementById('loader-msg').textContent = msg; }
+
+async function loadStats() {
+  // ── 1. Counts ───────────────────────────────────
+  setMsg('Comptage des radars…');
+  const [cGov, cSr, cOsm] = await Promise.all([
+    sbCount('raw_gov'),
+    sbCount('raw_sr'),
+    sbCount('raw_osm'),
+  ]);
+  document.getElementById('count-gov').textContent = fmt(cGov);
+  document.getElementById('count-sr').textContent  = fmt(cSr);
+  document.getElementById('count-osm').textContent = fmt(cOsm);
+
+  // ── 2. Freshness ─────────────────────────────────
+  setMsg('Vérification de la fraîcheur…');
+  const [fGov, fSr, fOsm] = await Promise.all([
+    sbSelect('raw_gov', 'select=fetched_at,changed_at&order=fetched_at.desc&limit=1'),
+    sbSelect('raw_sr',  'select=fetched_at,changed_at&order=fetched_at.desc&limit=1'),
+    sbSelect('raw_osm', 'select=fetched_at,changed_at&order=fetched_at.desc&limit=1'),
+  ]);
+  const freshData = [
+    { src: 'gov', color: COLORS.gov, label: 'GOV', row: fGov[0] },
+    { src: 'sr',  color: COLORS.sr,  label: 'SR',  row: fSr[0]  },
+    { src: 'osm', color: COLORS.osm, label: 'OSM', row: fOsm[0] },
+  ];
+  document.getElementById('fresh-rows').innerHTML = freshData.map(({ color, label, row }) => `
+    <div class="fresh-row">
+      <div class="src-name" style="color:${color}">${label}</div>
+      <div class="dates">
+        Fetch&nbsp;: ${fmtDate(row?.fetched_at)}<br>
+        Modif&nbsp;: ${fmtDate(row?.changed_at)}
+      </div>
+    </div>
+  `).join('');
+
+  // Also update sub-lines on count cards
+  document.getElementById('sub-gov').textContent = `fetch: ${fmtDate(fGov[0]?.fetched_at)}`;
+  document.getElementById('sub-sr').textContent  = `fetch: ${fmtDate(fSr[0]?.fetched_at)}`;
+  document.getElementById('sub-osm').textContent = `fetch: ${fmtDate(fOsm[0]?.fetched_at)}`;
+
+  // ── 3. Field coverage ────────────────────────────
+  setMsg('Analyse de la couverture des champs…');
+
+  // Build all count queries in parallel
+  const covTasks = [];
+  for (const field of AUDIT_FIELDS) {
+    for (const src of ['gov', 'sr', 'osm']) {
+      const col = field[src];
+      if (col) {
+        covTasks.push({
+          src, fieldLabel: field.label, col,
+          promise: sbCount(`raw_${src}`, `${col}=not.is.null`),
+        });
+      }
+    }
+  }
+  const resolved = await Promise.all(covTasks.map(t => t.promise.then(c => ({ ...t, count: c }))));
+
+  // Map results: fieldLabel → src → count
+  const covMap = {};
+  resolved.forEach(({ fieldLabel, src, count }) => {
+    if (!covMap[fieldLabel]) covMap[fieldLabel] = {};
+    covMap[fieldLabel][src] = count;
+  });
+
+  const totals = { gov: cGov, sr: cSr, osm: cOsm };
+  const tbody  = AUDIT_FIELDS.map(field => {
+    const cells = ['gov','sr','osm'].map(src => {
+      if (!field[src]) return `<td>${badgeHtml(-1)}</td>`;
+      const cnt = (covMap[field.label] || {})[src] || 0;
+      return `<td>${badgeHtml(pct(cnt, totals[src]))}</td>`;
+    }).join('');
+    return `<tr><td>${field.label}</td>${cells}</tr>`;
+  }).join('');
+  document.getElementById('cov-body').innerHTML = tbody;
+
+  // ── 4. Type distribution ─────────────────────────
+  setMsg('Distribution des types…');
+  const [govTypes, srTypes, osmTypes] = await Promise.all([
+    sbSelect('raw_gov', 'select=type&limit=5000'),
+    sbSelect('raw_sr',  'select=type&limit=5000'),
+    sbSelect('raw_osm', 'select=type&limit=5000'),
+  ]);
+
+  const typeCounts = {};
+  [...govTypes, ...srTypes, ...osmTypes].forEach(r => {
+    const t = (r.type || '').trim() || '(vide)';
+    typeCounts[t] = (typeCounts[t] || 0) + 1;
+  });
+
+  const sorted = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  const maxCount = sorted[0]?.[1] || 1;
+
+  document.getElementById('type-rows').innerHTML = sorted.map(([type, count]) => `
+    <div class="type-row">
+      <div class="type-label" title="${type}">${type}</div>
+      <div class="type-bar-wrap">
+        <div class="type-bar" style="width:${(count / maxCount * 100).toFixed(1)}%;background:var(--gov);opacity:0.7"></div>
+      </div>
+      <div class="type-count">${fmt(count)}</div>
+    </div>
+  `).join('');
+
+  // ── 5. Done — hide loader & trigger map load ─────
+  document.getElementById('loader').style.display = 'none';
+  refreshMap();
+}
+
+// ═══════════════════════════════════════════════════
+//  Boot
+// ═══════════════════════════════════════════════════
+if (!SUPABASE_KEY) {
+  document.getElementById('loader-msg').textContent = '⚠ Clé Supabase manquante';
+  document.getElementById('loader').insertAdjacentHTML('beforeend', `
+    <div class="setup-box">
+      <p style="color:var(--text);font-weight:600;margin-bottom:10px">Configuration requise</p>
+      <p>Ouvre <code>dashboard/index.html</code> et renseigne ta clé :</p>
+      <br>
+      <code>const SUPABASE_KEY = <span class="key">'ta-cle-ici'</span>;</code>
+      <br><br>
+      <p>Supabase → Project Settings → API → <strong>anon public</strong> ou <strong>service_role</strong></p>
+      <br>
+      <p style="font-size:11px">⚠ Si tu vois 0 résultats avec la clé anon, il faut désactiver RLS ou ajouter une policy SELECT sur les tables <code>raw_*</code>.</p>
+    </div>
+  `);
+} else {
+  loadStats().catch(err => {
+    document.getElementById('loader-msg').textContent = '❌ Erreur : ' + err.message;
+    console.error(err);
+  });
+}
+</script>
+</body>
+</html>
