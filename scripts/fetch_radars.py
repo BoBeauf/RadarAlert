@@ -132,16 +132,25 @@ def stable_sr_id(raw_id: str) -> int:
             return int(digits) + 200_000_000_000
         return abs(hash(raw_id)) + 100_000_000_000
 
+class SessionDisconnected(Exception):
+    """Le serveur a coupé la connexion TCP — la session doit être recréée."""
+
+def make_sr_session() -> requests.Session:
+    s = requests.Session()
+    s.headers.update({
+        "Accept":     "application/json",
+        "User-Agent": "Mozilla/5.0 (compatible; RadarAlert/1.0)",
+    })
+    return s
+
 def fetch_sr_detail(session: requests.Session, raw_id: str) -> dict | None:
     url = f"{SR_BASE_URL}/radars/{raw_id}"
     for attempt in range(1, SR_RETRIES + 1):
         try:
-            t0   = time.time()
             resp = session.get(url, timeout=30)
-            elapsed = time.time() - t0
 
             if resp.status_code == 429 or resp.status_code >= 500:
-                wait = min(2 ** attempt, 30)   # backoff exponentiel plafonné à 30s
+                wait = min(2 ** attempt, 30)
                 log("SR", f"  {raw_id} → HTTP {resp.status_code}, attente {wait}s (tentative {attempt}/{SR_RETRIES})")
                 time.sleep(wait)
                 continue
@@ -150,35 +159,28 @@ def fetch_sr_detail(session: requests.Session, raw_id: str) -> dict | None:
                 log("SR", f"  {raw_id} → HTTP {resp.status_code} (abandon)")
                 return None
 
-            # Délai minimal pour ne pas flooder le serveur
-            remaining = SR_MIN_DELAY_S - elapsed
-            if remaining > 0:
-                time.sleep(remaining)
-
             return resp.json()
 
         except requests.exceptions.Timeout:
             log("SR", f"  {raw_id} → timeout tentative {attempt}/{SR_RETRIES}")
             if attempt < SR_RETRIES:
                 time.sleep(2 * attempt)
-        except RequestsConnectionError as e:
-            # RemoteDisconnected = le serveur coupe sans répondre, pas la peine de retry
-            log("SR", f"  {raw_id} → connexion coupée (abandon) : {e}")
-            return None
+        except RequestsConnectionError:
+            # Le serveur a fermé la connexion persistente (~300 req/session)
+            # On propage pour que l'appelant recrée la session et réessaie
+            raise SessionDisconnected(raw_id)
         except Exception as e:
             log("SR", f"  {raw_id} → erreur tentative {attempt}/{SR_RETRIES}: {e}")
             if attempt < SR_RETRIES:
                 time.sleep(2 * attempt)
     return None
 
+SR_RECONNECT_WAIT_S = 10   # pause après coupure avant de recréer la session
+
 def fetch_sr() -> list[dict]:
     log("SR", "Connexion à securite-routiere.gouv.fr...")
     t0 = time.time()
-    session = requests.Session()
-    session.headers.update({
-        "Accept":     "application/json",
-        "User-Agent": "Mozilla/5.0 (compatible; RadarAlert/1.0)",
-    })
+    session = make_sr_session()
 
     # /radars/all : retry car le serveur est fragile
     basic_list = None
@@ -200,6 +202,10 @@ def fetch_sr() -> list[dict]:
     total = len(basic_list)
     log("SR", f"{total} radars dans la liste (Itinéraires exclus) — fetch des détails ({SR_MAX_CONCURRENT} workers)...")
 
+    # Conteneur mutable pour partager la session entre la closure et fetch_sr
+    # (évite le piège nonlocal avec le ThreadPoolExecutor)
+    sess = [session]
+
     def process_one(basic: dict) -> dict | None:
         raw_id = basic.get("id", "")
         lat    = basic.get("lat")
@@ -208,7 +214,18 @@ def fetch_sr() -> list[dict]:
             return None, False
 
         radar_type = SR_TYPE_MAP.get(basic.get("typeLabel", ""), basic.get("typeLabel", ""))
-        detail     = fetch_sr_detail(session, raw_id)
+
+        # Retry avec nouvelle session si le serveur coupe la connexion TCP
+        detail = None
+        for reconnect in range(SR_RETRIES):
+            try:
+                detail = fetch_sr_detail(sess[0], raw_id)
+                break
+            except SessionDisconnected:
+                log("SR", f"  {raw_id} → connexion coupée — nouvelle session dans {SR_RECONNECT_WAIT_S}s (reconnect {reconnect + 1}/{SR_RETRIES})")
+                sess[0].close()
+                time.sleep(SR_RECONNECT_WAIT_S)
+                sess[0] = make_sr_session()
 
         speed_car = speed_hgv = None
         department = route = direction = equipment = install_date = section_km = ""
