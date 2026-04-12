@@ -29,8 +29,9 @@ SR_BASE_URL    = "https://radars.securite-routiere.gouv.fr"
 OVERPASS_URL   = "https://overpass-api.de/api/interpreter"
 OVERPASS_QUERY = '[out:json][timeout:360];node["highway"="speed_camera"](35.0,-11.0,72.0,45.0);out body;'
 
-SR_MAX_CONCURRENT = 10
-SR_RETRIES        = 3
+SR_MAX_CONCURRENT = 4
+SR_RETRIES        = 5
+SR_MIN_DELAY_S    = 0.15   # délai minimum entre deux requêtes dans le même worker
 BATCH_SIZE        = 500
 
 
@@ -134,13 +135,35 @@ def fetch_sr_detail(session: requests.Session, raw_id: str) -> dict | None:
     url = f"{SR_BASE_URL}/radars/{raw_id}"
     for attempt in range(1, SR_RETRIES + 1):
         try:
-            resp = session.get(url, timeout=40, headers={"Connection": "close"})
+            t0   = time.time()
+            resp = session.get(url, timeout=30)
+            elapsed = time.time() - t0
+
+            if resp.status_code == 429 or resp.status_code >= 500:
+                wait = min(2 ** attempt, 30)   # backoff exponentiel plafonné à 30s
+                log("SR", f"  {raw_id} → HTTP {resp.status_code}, attente {wait}s (tentative {attempt}/{SR_RETRIES})")
+                time.sleep(wait)
+                continue
+
             if not resp.ok:
+                log("SR", f"  {raw_id} → HTTP {resp.status_code} (abandon)")
                 return None
+
+            # Délai minimal pour ne pas flooder le serveur
+            remaining = SR_MIN_DELAY_S - elapsed
+            if remaining > 0:
+                time.sleep(remaining)
+
             return resp.json()
-        except Exception:
+
+        except requests.exceptions.Timeout:
+            log("SR", f"  {raw_id} → timeout tentative {attempt}/{SR_RETRIES}")
             if attempt < SR_RETRIES:
-                time.sleep(0.5 * attempt)
+                time.sleep(2 * attempt)
+        except Exception as e:
+            log("SR", f"  {raw_id} → erreur tentative {attempt}/{SR_RETRIES}: {e}")
+            if attempt < SR_RETRIES:
+                time.sleep(2 * attempt)
     return None
 
 def fetch_sr() -> list[dict]:
@@ -175,16 +198,18 @@ def fetch_sr() -> list[dict]:
         lat    = basic.get("lat")
         lng    = basic.get("lng")
         if not raw_id or lat is None or lng is None:
-            return None
+            return None, False
 
         radar_type = SR_TYPE_MAP.get(basic.get("typeLabel", ""), basic.get("typeLabel", ""))
         detail     = fetch_sr_detail(session, raw_id)
 
         speed_car = speed_hgv = None
         department = route = direction = equipment = install_date = section_km = ""
+        detail_ok = False
 
         if detail:
-            for rule in detail.get("rulesmesured", []):
+            detail_ok = True
+            for rule in (detail.get("rulesmesured") or []):
                 mname = rule.get("macinename", "")
                 if mname.startswith("vitesse_vl_"):
                     try: speed_car = int(mname[len("vitesse_vl_"):])
@@ -220,29 +245,33 @@ def fetch_sr() -> list[dict]:
             lat, lng, radar_type, speed_car, speed_hgv,
             department, route, direction, equipment, install_date, section_km
         )
-        return radar
+        return radar, detail_ok
 
     radars = []
-    failed = 0
+    fetch_failed = no_detail = with_speed = 0
     t_sr = time.time()
     with ThreadPoolExecutor(max_workers=SR_MAX_CONCURRENT) as executor:
         futures = {executor.submit(process_one, b): b for b in basic_list}
         done = 0
         for future in as_completed(futures):
-            result = future.result()
+            result, ok = future.result()
             if result:
                 radars.append(result)
+                if result.get("speed_car") is not None:
+                    with_speed += 1
+                if not ok:
+                    no_detail += 1
             else:
-                failed += 1
+                fetch_failed += 1
             done += 1
             if done % 100 == 0:
                 elapsed = time.time() - t_sr
                 rate = done / elapsed
                 eta = (total - done) / rate if rate > 0 else 0
                 pct = done * 100 // total
-                log("SR", f"  {done}/{total} ({pct}%) — {failed} échecs — {rate:.1f} req/s — ETA {eta:.0f}s")
+                log("SR", f"  {done}/{total} ({pct}%) — fetch_ko={fetch_failed} detail_ko={no_detail} avec_vitesse={with_speed} — {rate:.1f} req/s — ETA {eta:.0f}s")
 
-    log("SR", f"Terminé en {time.time() - t0:.1f}s — {len(radars)} radars ({failed} échecs détail)")
+    log("SR", f"Terminé en {time.time() - t0:.1f}s — {len(radars)} radars — fetch_ko={fetch_failed} detail_ko={no_detail} avec_vitesse={with_speed}")
     return radars
 
 
