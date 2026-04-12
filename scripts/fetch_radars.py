@@ -195,8 +195,10 @@ def fetch_sr() -> list[dict]:
     if basic_list is None:
         raise RuntimeError("Impossible de récupérer /radars/all après plusieurs tentatives")
 
+    # Les Itinéraires (I_xx_xxx) sont des zones, pas des radars ponctuels — on les exclut
+    basic_list = [r for r in basic_list if r.get("typeLabel") != "Itinéraires"]
     total = len(basic_list)
-    log("SR", f"{total} radars dans la liste — fetch des détails ({SR_MAX_CONCURRENT} workers)...")
+    log("SR", f"{total} radars dans la liste (Itinéraires exclus) — fetch des détails ({SR_MAX_CONCURRENT} workers)...")
 
     def process_one(basic: dict) -> dict | None:
         raw_id = basic.get("id", "")
@@ -205,13 +207,8 @@ def fetch_sr() -> list[dict]:
         if not raw_id or lat is None or lng is None:
             return None, False
 
-        radar_type   = SR_TYPE_MAP.get(basic.get("typeLabel", ""), basic.get("typeLabel", ""))
-        type_label   = basic.get("typeLabel", "")
-
-        # Les Itinéraires (I_xx_xxx) n'ont pas d'endpoint detail fonctionnel
-        # et n'ont pas de vitesse ponctuelle — on skip le fetch
-        skip_detail = type_label == "Itinéraires"
-        detail      = None if skip_detail else fetch_sr_detail(session, raw_id)
+        radar_type = SR_TYPE_MAP.get(basic.get("typeLabel", ""), basic.get("typeLabel", ""))
+        detail     = fetch_sr_detail(session, raw_id)
 
         speed_car = speed_hgv = None
         department = route = direction = equipment = install_date = section_km = ""
