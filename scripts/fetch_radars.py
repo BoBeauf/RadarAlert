@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from io import StringIO
 
 import requests
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 # ── Config ────────────────────────────────────────────────────
 
@@ -160,6 +161,10 @@ def fetch_sr_detail(session: requests.Session, raw_id: str) -> dict | None:
             log("SR", f"  {raw_id} → timeout tentative {attempt}/{SR_RETRIES}")
             if attempt < SR_RETRIES:
                 time.sleep(2 * attempt)
+        except RequestsConnectionError as e:
+            # RemoteDisconnected = le serveur coupe sans répondre, pas la peine de retry
+            log("SR", f"  {raw_id} → connexion coupée (abandon) : {e}")
+            return None
         except Exception as e:
             log("SR", f"  {raw_id} → erreur tentative {attempt}/{SR_RETRIES}: {e}")
             if attempt < SR_RETRIES:
@@ -200,8 +205,13 @@ def fetch_sr() -> list[dict]:
         if not raw_id or lat is None or lng is None:
             return None, False
 
-        radar_type = SR_TYPE_MAP.get(basic.get("typeLabel", ""), basic.get("typeLabel", ""))
-        detail     = fetch_sr_detail(session, raw_id)
+        radar_type   = SR_TYPE_MAP.get(basic.get("typeLabel", ""), basic.get("typeLabel", ""))
+        type_label   = basic.get("typeLabel", "")
+
+        # Les Itinéraires (I_xx_xxx) n'ont pas d'endpoint detail fonctionnel
+        # et n'ont pas de vitesse ponctuelle — on skip le fetch
+        skip_detail = type_label == "Itinéraires"
+        detail      = None if skip_detail else fetch_sr_detail(session, raw_id)
 
         speed_car = speed_hgv = None
         department = route = direction = equipment = install_date = section_km = ""
