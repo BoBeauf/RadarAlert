@@ -30,9 +30,9 @@ SR_BASE_URL    = "https://radars.securite-routiere.gouv.fr"
 OVERPASS_URL   = "https://overpass-api.de/api/interpreter"
 OVERPASS_QUERY = '[out:json][timeout:360];node["highway"="speed_camera"](35.0,-11.0,72.0,45.0);out body;'
 
-SR_MAX_CONCURRENT = 4
+SR_MAX_CONCURRENT = 1      # le serveur SR rate-limite à ~25 req/s depuis GHA — 1 worker = ~3 req/s
 SR_RETRIES        = 5
-SR_MIN_DELAY_S    = 0.15   # délai minimum entre deux requêtes dans le même worker
+SR_MIN_DELAY_S    = 0.0    # pas de délai artificiel, le RTT réseau suffit (~300ms)
 BATCH_SIZE        = 500
 
 
