@@ -12,6 +12,7 @@ Logique :
 import csv
 import hashlib
 import os
+import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -29,9 +30,9 @@ SR_BASE_URL    = "https://radars.securite-routiere.gouv.fr"
 OVERPASS_URL   = "https://overpass-api.de/api/interpreter"
 OVERPASS_QUERY = '[out:json][timeout:360];node["highway"="speed_camera"](35.0,-11.0,72.0,45.0);out body;'
 
-SR_MAX_CONCURRENT = 4
-SR_RETRIES        = 5
-SR_MIN_DELAY_S    = 0.15   # délai minimum entre deux requêtes dans le même worker
+SR_RETRIES        = 3
+SR_DELAY_BASE_S   = 1.0    # délai de base entre chaque requête detail SR
+SR_DELAY_JITTER_S = 0.5    # ± jitter aléatoire (évite les patterns détectables)
 BATCH_SIZE        = 500
 
 
@@ -135,35 +136,20 @@ def fetch_sr_detail(session: requests.Session, raw_id: str) -> dict | None:
     url = f"{SR_BASE_URL}/radars/{raw_id}"
     for attempt in range(1, SR_RETRIES + 1):
         try:
-            t0   = time.time()
             resp = session.get(url, timeout=30)
-            elapsed = time.time() - t0
-
             if resp.status_code == 429 or resp.status_code >= 500:
-                wait = min(2 ** attempt, 30)   # backoff exponentiel plafonné à 30s
+                wait = min(2 ** attempt, 30)
                 log("SR", f"  {raw_id} → HTTP {resp.status_code}, attente {wait}s (tentative {attempt}/{SR_RETRIES})")
                 time.sleep(wait)
                 continue
-
             if not resp.ok:
-                log("SR", f"  {raw_id} → HTTP {resp.status_code} (abandon)")
                 return None
-
-            # Délai minimal pour ne pas flooder le serveur
-            remaining = SR_MIN_DELAY_S - elapsed
-            if remaining > 0:
-                time.sleep(remaining)
-
             return resp.json()
-
-        except requests.exceptions.Timeout:
-            log("SR", f"  {raw_id} → timeout tentative {attempt}/{SR_RETRIES}")
-            if attempt < SR_RETRIES:
-                time.sleep(2 * attempt)
         except Exception as e:
-            log("SR", f"  {raw_id} → erreur tentative {attempt}/{SR_RETRIES}: {e}")
             if attempt < SR_RETRIES:
                 time.sleep(2 * attempt)
+            else:
+                log("SR", f"  {raw_id} → abandon après {SR_RETRIES} tentatives : {e}")
     return None
 
 def fetch_sr() -> list[dict]:
@@ -190,25 +176,33 @@ def fetch_sr() -> list[dict]:
     if basic_list is None:
         raise RuntimeError("Impossible de récupérer /radars/all après plusieurs tentatives")
 
-    total = len(basic_list)
-    log("SR", f"{total} radars dans la liste — fetch des détails ({SR_MAX_CONCURRENT} workers)...")
+    # Les Itinéraires (I_xx_xxx) sont des zones, pas des radars ponctuels — on les exclut
+    basic_list = [r for r in basic_list if r.get("typeLabel") != "Itinéraires"]
 
-    def process_one(basic: dict) -> dict | None:
+    # Ordre aléatoire : évite les patterns détectables côté serveur
+    random.shuffle(basic_list)
+
+    total = len(basic_list)
+    log("SR", f"{total} radars (Itinéraires exclus, ordre aléatoire) — fetch séquentiel avec jitter {SR_DELAY_BASE_S}s ± {SR_DELAY_JITTER_S}s...")
+
+    radars = []
+    failed = with_speed = 0
+    t_sr = time.time()
+
+    for i, basic in enumerate(basic_list):
         raw_id = basic.get("id", "")
         lat    = basic.get("lat")
         lng    = basic.get("lng")
         if not raw_id or lat is None or lng is None:
-            return None, False
+            continue
 
         radar_type = SR_TYPE_MAP.get(basic.get("typeLabel", ""), basic.get("typeLabel", ""))
         detail     = fetch_sr_detail(session, raw_id)
 
         speed_car = speed_hgv = None
         department = route = direction = equipment = install_date = section_km = ""
-        detail_ok = False
 
         if detail:
-            detail_ok = True
             for rule in (detail.get("rulesmesured") or []):
                 mname = rule.get("macinename", "")
                 if mname.startswith("vitesse_vl_"):
@@ -217,7 +211,6 @@ def fetch_sr() -> list[dict]:
                 elif mname.startswith("vitesse_pl_"):
                     try: speed_hgv = int(mname[len("vitesse_pl_"):])
                     except ValueError: pass
-
             troncon      = detail.get("radartronconkm", "")
             section_km   = troncon.replace(",", ".").strip() if isinstance(troncon, str) else ""
             department   = detail.get("department", "")
@@ -225,8 +218,13 @@ def fetch_sr() -> list[dict]:
             direction    = detail.get("radardirection", "")
             equipment    = detail.get("radarequipment", "")
             install_date = detail.get("radarinstalldate", "")
+        else:
+            failed += 1
 
-        radar = {
+        if speed_car is not None:
+            with_speed += 1
+
+        radars.append({
             "source_id":         raw_id,
             "stable_id":         stable_sr_id(raw_id),
             "lat":               lat,
@@ -240,38 +238,23 @@ def fetch_sr() -> list[dict]:
             "equipment":         equipment,
             "install_date":      install_date,
             "section_length_km": section_km,
-        }
-        radar["data_hash"] = make_hash(
-            lat, lng, radar_type, speed_car, speed_hgv,
-            department, route, direction, equipment, install_date, section_km
-        )
-        return radar, detail_ok
+            "data_hash": make_hash(
+                lat, lng, radar_type, speed_car, speed_hgv,
+                department, route, direction, equipment, install_date, section_km
+            ),
+        })
 
-    radars = []
-    fetch_failed = no_detail = with_speed = 0
-    t_sr = time.time()
-    with ThreadPoolExecutor(max_workers=SR_MAX_CONCURRENT) as executor:
-        futures = {executor.submit(process_one, b): b for b in basic_list}
-        done = 0
-        for future in as_completed(futures):
-            result, ok = future.result()
-            if result:
-                radars.append(result)
-                if result.get("speed_car") is not None:
-                    with_speed += 1
-                if not ok:
-                    no_detail += 1
-            else:
-                fetch_failed += 1
-            done += 1
-            if done % 100 == 0:
-                elapsed = time.time() - t_sr
-                rate = done / elapsed
-                eta = (total - done) / rate if rate > 0 else 0
-                pct = done * 100 // total
-                log("SR", f"  {done}/{total} ({pct}%) — fetch_ko={fetch_failed} detail_ko={no_detail} avec_vitesse={with_speed} — {rate:.1f} req/s — ETA {eta:.0f}s")
+        done = i + 1
+        if done % 100 == 0:
+            elapsed = time.time() - t_sr
+            eta = (total - done) * elapsed / done
+            pct = done * 100 // total
+            log("SR", f"  {done}/{total} ({pct}%) — detail_ko={failed} avec_vitesse={with_speed} — ETA {eta:.0f}s")
 
-    log("SR", f"Terminé en {time.time() - t0:.1f}s — {len(radars)} radars — fetch_ko={fetch_failed} detail_ko={no_detail} avec_vitesse={with_speed}")
+        # Délai avec jitter pour rester sous le radar du rate-limiter
+        time.sleep(max(0.2, SR_DELAY_BASE_S + random.uniform(-SR_DELAY_JITTER_S, SR_DELAY_JITTER_S)))
+
+    log("SR", f"Terminé en {time.time() - t0:.1f}s — {len(radars)} radars — detail_ko={failed} avec_vitesse={with_speed}")
     return radars
 
 
