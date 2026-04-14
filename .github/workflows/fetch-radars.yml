@@ -2,7 +2,7 @@ name: Fetch radar data
 
 on:
   schedule:
-    - cron: "0 3 * * *"   # tous les jours à 3h UTC
+    - cron: "0 1 * * 6"   # At 01:00 on Sunday
   workflow_dispatch:        # déclenchement manuel possible
 
 jobs:
