@@ -18,3 +18,7 @@ local.properties
 # OS
 .DS_Store
 Thumbs.db
+
+# Variables d'environnement locales (secrets)
+.env
+.env.*

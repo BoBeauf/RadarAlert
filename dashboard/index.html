@@ -25,6 +25,7 @@
       --gov:     #4a90d9;
       --sr:      #e8832a;
       --osm:     #5bb55b;
+      --fusion:  #a78bfa;
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -56,7 +57,25 @@
     .logo { font-size: 14px; font-weight: 700; white-space: nowrap; }
     .logo span { color: var(--muted); font-weight: 400; font-size: 13px; }
 
-    .source-toggles { display: flex; gap: 6px; margin-left: auto; }
+    .header-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+    .source-toggles { display: flex; gap: 6px; }
+
+    .icon-btn {
+      padding: 4px 10px;
+      border-radius: 8px;
+      border: 1.5px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .icon-btn:hover { border-color: var(--muted); }
+    .icon-btn.active { border-color: var(--fusion); color: var(--fusion); }
+
+    .sep { width: 1px; height: 22px; background: var(--border); }
 
     .toggle-btn {
       padding: 4px 14px;
@@ -69,12 +88,14 @@
       letter-spacing: 0.04em;
       transition: background 0.15s, color 0.15s;
     }
-    .toggle-btn.gov        { color: var(--gov); border-color: var(--gov); }
-    .toggle-btn.sr         { color: var(--sr);  border-color: var(--sr);  }
-    .toggle-btn.osm        { color: var(--osm); border-color: var(--osm); }
-    .toggle-btn.active.gov { background: var(--gov); color: #fff; }
-    .toggle-btn.active.sr  { background: var(--sr);  color: #fff; }
-    .toggle-btn.active.osm { background: var(--osm); color: #fff; }
+    .toggle-btn.gov          { color: var(--gov);    border-color: var(--gov);    }
+    .toggle-btn.sr           { color: var(--sr);     border-color: var(--sr);     }
+    .toggle-btn.osm          { color: var(--osm);    border-color: var(--osm);    }
+    .toggle-btn.fusion       { color: var(--fusion); border-color: var(--fusion); }
+    .toggle-btn.active.gov   { background: var(--gov);    color: #fff; }
+    .toggle-btn.active.sr    { background: var(--sr);     color: #fff; }
+    .toggle-btn.active.osm   { background: var(--osm);    color: #fff; }
+    .toggle-btn.active.fusion{ background: var(--fusion); color: #fff; }
 
     /* ── Layout ─────────────────────────────────────── */
     .main { display: flex; flex: 1; overflow: hidden; }
@@ -270,10 +291,17 @@
 <!-- Header -->
 <header>
   <div class="logo">RadarAlert <span>/ Audit Dashboard</span></div>
-  <div class="source-toggles">
-    <button class="toggle-btn gov active" data-source="gov">GOV</button>
-    <button class="toggle-btn sr  active" data-source="sr">SR</button>
-    <button class="toggle-btn osm active" data-source="osm">OSM</button>
+  <div class="header-right">
+    <button class="icon-btn" id="tile-btn" title="Changer le fond de carte">🌑 Dark</button>
+    <div class="sep"></div>
+    <button class="icon-btn active" id="country-btn" title="Filtrer par pays (OSM + FUSION)">🇫🇷 France</button>
+    <div class="sep"></div>
+    <div class="source-toggles">
+      <button class="toggle-btn gov   active" data-source="gov">GOV</button>
+      <button class="toggle-btn sr    active" data-source="sr">SR</button>
+      <button class="toggle-btn osm   active" data-source="osm">OSM</button>
+      <button class="toggle-btn fusion"       data-source="fusion">FUSION</button>
+    </div>
   </div>
 </header>
 
@@ -310,6 +338,22 @@
             <div class="stat-sub"  id="sub-osm">—</div>
           </div>
         </div>
+        <div class="stat-card" style="border-color:var(--fusion);opacity:0.85">
+          <div class="stat-dot" style="background:var(--fusion)"></div>
+          <div class="stat-info">
+            <div class="stat-source-label">Consolidés (FUSION)</div>
+            <div class="stat-count" id="count-fusion">—</div>
+            <div class="stat-sub"  id="sub-fusion">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Doublons / triplons -->
+    <div>
+      <div class="section-title">Recoupement des sources</div>
+      <div class="type-rows" id="overlap-rows">
+        <div class="loading-text">Chargement…</div>
       </div>
     </div>
 
@@ -370,11 +414,12 @@ const SUPABASE_KEY = 'sb_publishable_Yw4Lx_La7OXgwe6ZJAyVTA_gkxObKuG';   // ← 
 // ═══════════════════════════════════════════════════
 //  Constants
 // ═══════════════════════════════════════════════════
-const COLORS  = { gov: '#4a90d9', sr: '#e8832a', osm: '#5bb55b' };
+const COLORS  = { gov: '#4a90d9', sr: '#e8832a', osm: '#5bb55b', fusion: '#a78bfa' };
 const SOURCES = {
-  gov: { table: 'raw_gov', label: 'GOV',  color: COLORS.gov },
-  sr:  { table: 'raw_sr',  label: 'SR',   color: COLORS.sr  },
-  osm: { table: 'raw_osm', label: 'OSM',  color: COLORS.osm },
+  gov:    { table: 'raw_gov', label: 'GOV',    color: COLORS.gov    },
+  sr:     { table: 'raw_sr',  label: 'SR',     color: COLORS.sr     },
+  osm:    { table: 'raw_osm', label: 'OSM',    color: COLORS.osm    },
+  fusion: { table: 'radars',  label: 'FUSION', color: COLORS.fusion },
 };
 
 // Fields to audit — null means this source doesn't have the column
@@ -431,20 +476,49 @@ async function sbSelect(table, params) {
 // ═══════════════════════════════════════════════════
 const map = L.map('map', { zoomControl: true }).setView([46.6, 2.4], 6);
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  attribution: '© OpenStreetMap contributors, © CartoDB',
-  maxZoom: 19,
-}).addTo(map);
+// ── Tile layers ──────────────────────────────────────────────
+const TILES = [
+  { id: 'dark',      label: '🌑 Dark',      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',  attr: '© OpenStreetMap contributors, © CartoDB' },
+  { id: 'light',     label: '☀️ Light',     url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', attr: '© OpenStreetMap contributors, © CartoDB' },
+  { id: 'osm',       label: '🗺️ OSM',       url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',              attr: '© OpenStreetMap contributors' },
+  { id: 'satellite', label: '🛰️ Satellite', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: '© Esri' },
+];
+let tileIdx = 0;
+let currentTile = L.tileLayer(TILES[0].url, { attribution: TILES[0].attr, maxZoom: 19 }).addTo(map);
+
+document.getElementById('tile-btn').addEventListener('click', () => {
+  map.removeLayer(currentTile);
+  tileIdx = (tileIdx + 1) % TILES.length;
+  const t = TILES[tileIdx];
+  currentTile = L.tileLayer(t.url, { attribution: t.attr, maxZoom: 19 }).addTo(map);
+  // Remettre les clusters au-dessus du fond
+  Object.values(clusterLayers).forEach(l => l.bringToFront && l.bringToFront());
+  document.getElementById('tile-btn').textContent = t.label;
+});
+
+// ── Country filter ────────────────────────────────────────────
+let countryFR = true;   // true = France only pour OSM et FUSION (via colonne country=FR)
+
+document.getElementById('country-btn').addEventListener('click', () => {
+  countryFR = !countryFR;
+  const btn = document.getElementById('country-btn');
+  btn.textContent = countryFR ? '🇫🇷 France' : '🌍 Europe';
+  btn.classList.toggle('active', countryFR);
+  refreshMap();
+  loadStats(true).catch(err => console.error('Stats reload error:', err));
+});
 
 // One cluster layer per source
 const clusterLayers = {
-  gov: L.markerClusterGroup({ maxClusterRadius: 40, chunkedLoading: true, disableClusteringAtZoom: 14 }),
-  sr:  L.markerClusterGroup({ maxClusterRadius: 40, chunkedLoading: true, disableClusteringAtZoom: 14 }),
-  osm: L.markerClusterGroup({ maxClusterRadius: 40, chunkedLoading: true, disableClusteringAtZoom: 14 }),
+  gov:    L.markerClusterGroup({ maxClusterRadius: 40, chunkedLoading: true, disableClusteringAtZoom: 14 }),
+  sr:     L.markerClusterGroup({ maxClusterRadius: 40, chunkedLoading: true, disableClusteringAtZoom: 14 }),
+  osm:    L.markerClusterGroup({ maxClusterRadius: 40, chunkedLoading: true, disableClusteringAtZoom: 14 }),
+  fusion: L.markerClusterGroup({ maxClusterRadius: 40, chunkedLoading: true, disableClusteringAtZoom: 14 }),
 };
-Object.values(clusterLayers).forEach(l => map.addLayer(l));
+// FUSION masqué par défaut (couche de synthèse, pas d'audit brut)
+['gov','sr','osm'].forEach(s => map.addLayer(clusterLayers[s]));
 
-const visible = { gov: true, sr: true, osm: true };
+const visible = { gov: true, sr: true, osm: true, fusion: false };
 
 function makeDotIcon(color) {
   return L.divIcon({
@@ -465,54 +539,82 @@ function nullVal(v) {
 
 function buildPopup(source, row) {
   const { label, color } = SOURCES[source];
-  const rows = source === 'osm'
-    ? [
-        ['ID OSM',      row.source_id],
-        ['Type',        row.type],
-        ['Vitesse VL',  row.speed_limit     ? row.speed_limit     + ' km/h' : null],
-        ['Vitesse PL',  row.speed_limit_hgv ? row.speed_limit_hgv + ' km/h' : null],
-        ['Commune',     row.city],
-        ['Route',       row.route],
-        ['Direction',   row.direction],
-      ]
-    : [
-        ['ID',           row.source_id],
-        ['Type',         row.type],
-        ['Vitesse VL',   row.speed_car  ? row.speed_car  + ' km/h' : null],
-        ['Vitesse PL',   row.speed_hgv  ? row.speed_hgv  + ' km/h' : null],
-        ['Département',  row.department],
-        ['Commune',      row.city],
-        ['Route',        row.route],
-        ['Direction',    row.direction],
-        ['Équipement',   row.equipment],
-        ['Date install.',row.install_date],
-        ['Tronçon',      row.section_length_km ? row.section_length_km + ' km' : null],
-      ];
 
-  // Hide city for SR (not in schema), keep others
+  let rows;
+  if (source === 'fusion') {
+    const srcBadges = (row.sources || []).map(s =>
+      `<span style="background:${COLORS[s]}22;color:${COLORS[s]};padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700">${s.toUpperCase()}</span>`
+    ).join(' ');
+    rows = [
+      ['Sources',      srcBadges],
+      ['Type',         row.type],
+      ['Vitesse VL',   row.speed_car  ? row.speed_car  + ' km/h' : null],
+      ['Vitesse PL',   row.speed_hgv  ? row.speed_hgv  + ' km/h' : null],
+      ['Département',  row.department],
+      ['Commune',      row.city],
+      ['Route',        row.route],
+      ['Direction',    row.direction],
+      ['Équipement',   row.equipment],
+      ['Date install.',row.install_date],
+      ['Tronçon',      row.section_length_km ? row.section_length_km + ' km' : null],
+    ];
+    return `<div class="radar-popup">
+      <div class="src-badge" style="background:${color}22;color:${color}">${label}</div>
+      <table>${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v != null && v !== '' ? v : `<span class="null-val">—</span>`}</td></tr>`).join('')}</table>
+    </div>`;
+  }
+
+  if (source === 'osm') {
+    rows = [
+      ['ID OSM',      row.source_id],
+      ['Type',        row.type],
+      ['Vitesse VL',  row.speed_limit     ? row.speed_limit     + ' km/h' : null],
+      ['Vitesse PL',  row.speed_limit_hgv ? row.speed_limit_hgv + ' km/h' : null],
+      ['Commune',     row.city],
+      ['Route',       row.route],
+      ['Direction',   row.direction],
+    ];
+  } else {
+    rows = [
+      ['ID',           row.source_id],
+      ['Type',         row.type],
+      ['Vitesse VL',   row.speed_car  ? row.speed_car  + ' km/h' : null],
+      ['Vitesse PL',   row.speed_hgv  ? row.speed_hgv  + ' km/h' : null],
+      ['Département',  row.department],
+      ['Commune',      row.city],
+      ['Route',        row.route],
+      ['Direction',    row.direction],
+      ['Équipement',   row.equipment],
+      ['Date install.',row.install_date],
+      ['Tronçon',      row.section_length_km ? row.section_length_km + ' km' : null],
+    ];
+  }
+
   const filtered = source === 'sr' ? rows.filter(([k]) => k !== 'Commune') : rows;
-
   return `<div class="radar-popup">
     <div class="src-badge" style="background:${color}22;color:${color}">${label}</div>
     <table>${filtered.map(([k, v]) => `<tr><td>${k}</td><td>${nullVal(v)}</td></tr>`).join('')}</table>
   </div>`;
 }
 
+const SELECT_COLS = {
+  gov:    'source_id,lat,lng,type,speed_car,speed_hgv,department,city,route,direction,equipment,install_date,section_length_km',
+  sr:     'source_id,lat,lng,type,speed_car,speed_hgv,department,route,direction,equipment,install_date,section_length_km',
+  osm:    'source_id,lat,lng,type,speed_limit,speed_limit_hgv,city,route,direction',
+  fusion: 'canonical_id,sources,lat,lng,type,speed_car,speed_hgv,department,city,route,direction,equipment,install_date,section_length_km,source_count',
+};
+
 async function loadSourceInBounds(source, bounds) {
   if (!visible[source]) return 0;
   const { table } = SOURCES[source];
+
   const s = bounds.getSouth().toFixed(5);
   const n = bounds.getNorth().toFixed(5);
   const w = bounds.getWest().toFixed(5);
   const e = bounds.getEast().toFixed(5);
 
-  const select = source === 'osm'
-    ? 'source_id,lat,lng,type,speed_limit,speed_limit_hgv,city,route,direction'
-    : source === 'sr'
-    ? 'source_id,lat,lng,type,speed_car,speed_hgv,department,route,direction,equipment,install_date,section_length_km'
-    : 'source_id,lat,lng,type,speed_car,speed_hgv,department,city,route,direction,equipment,install_date,section_length_km';
-
-  const params = `select=${select}&lat=gte.${s}&lat=lte.${n}&lng=gte.${w}&lng=lte.${e}&limit=${MAX_PER_SRC}`;
+  let params = `select=${SELECT_COLS[source]}&lat=gte.${s}&lat=lte.${n}&lng=gte.${w}&lng=lte.${e}&limit=${MAX_PER_SRC}`;
+  if (countryFR && (source === 'osm' || source === 'fusion')) params += '&country=eq.FR';
   const rows   = await sbSelect(table, params);
 
   clusterLayers[source].clearLayers();
@@ -546,7 +648,7 @@ async function refreshMap() {
 
     const bounds = map.getBounds().pad(0.08);
     try {
-      const counts = await Promise.all(['gov','sr','osm'].map(s => loadSourceInBounds(s, bounds)));
+      const counts = await Promise.all(['gov','sr','osm','fusion'].map(s => loadSourceInBounds(s, bounds)));
       const total  = counts.reduce((a, b) => a + b, 0);
       document.getElementById('st-markers').textContent = total.toLocaleString('fr');
       const capped = counts.some(c => c >= MAX_PER_SRC);
@@ -570,9 +672,13 @@ document.querySelectorAll('.toggle-btn').forEach(btn => {
     const src = btn.dataset.source;
     visible[src] = !visible[src];
     btn.classList.toggle('active', visible[src]);
-    if (visible[src]) map.addLayer(clusterLayers[src]);
-    else              map.removeLayer(clusterLayers[src]);
-    // Update marker count
+    if (visible[src]) {
+      map.addLayer(clusterLayers[src]);
+      // Charger la couche si elle était vide (lazy load pour FUSION)
+      if (clusterLayers[src].getLayers().length === 0) refreshMap();
+    } else {
+      map.removeLayer(clusterLayers[src]);
+    }
     let total = 0;
     for (const [s, l] of Object.entries(clusterLayers)) if (visible[s]) total += l.getLayers().length;
     document.getElementById('st-markers').textContent = total.toLocaleString('fr');
@@ -604,17 +710,33 @@ function fmtDate(iso) {
 // ═══════════════════════════════════════════════════
 function setMsg(msg) { document.getElementById('loader-msg').textContent = msg; }
 
-async function loadStats() {
-  // ── 1. Counts ───────────────────────────────────
-  setMsg('Comptage des radars…');
+// Filtre pays exact via la colonne `country` calculée par PIP en Python
+function withFR(src, existing = '') {
+  if (!countryFR || (src !== 'osm' && src !== 'fusion')) return existing;
+  return existing ? `${existing}&country=eq.FR` : 'country=eq.FR';
+}
+
+// reload=true : pas de loader plein écran, indicateur dans la statusbar
+async function loadStats(reload = false) {
+  if (reload) {
+    document.getElementById('st-msg').textContent = '⟳ Mise à jour des stats…';
+  }
+
+  // ── 1. Counts (raw_* toujours présentes ; radars optionnelle) ──
+  if (!reload) setMsg('Comptage des radars…');
   const [cGov, cSr, cOsm] = await Promise.all([
     sbCount('raw_gov'),
     sbCount('raw_sr'),
-    sbCount('raw_osm'),
+    sbCount('raw_osm', withFR('osm')),
   ]);
   document.getElementById('count-gov').textContent = fmt(cGov);
   document.getElementById('count-sr').textContent  = fmt(cSr);
   document.getElementById('count-osm').textContent = fmt(cOsm);
+
+  // Tente de compter la table FUSION — silencieux si elle n'existe pas encore
+  let cFusion = 0;
+  try { cFusion = await sbCount('radars', withFR('fusion')); } catch (_) {}
+  document.getElementById('count-fusion').textContent = cFusion > 0 ? fmt(cFusion) : '—';
 
   // ── 2. Freshness ─────────────────────────────────
   setMsg('Vérification de la fraîcheur…');
@@ -623,10 +745,14 @@ async function loadStats() {
     sbSelect('raw_sr',  'select=fetched_at,changed_at&order=fetched_at.desc&limit=1'),
     sbSelect('raw_osm', 'select=fetched_at,changed_at&order=fetched_at.desc&limit=1'),
   ]);
+  let fFusion = [];
+  try { fFusion = await sbSelect('radars', 'select=fetched_at,changed_at&order=fetched_at.desc&limit=1'); } catch (_) {}
+
   const freshData = [
-    { src: 'gov', color: COLORS.gov, label: 'GOV', row: fGov[0] },
-    { src: 'sr',  color: COLORS.sr,  label: 'SR',  row: fSr[0]  },
-    { src: 'osm', color: COLORS.osm, label: 'OSM', row: fOsm[0] },
+    { color: COLORS.gov,    label: 'GOV',    row: fGov[0]    },
+    { color: COLORS.sr,     label: 'SR',     row: fSr[0]     },
+    { color: COLORS.osm,    label: 'OSM',    row: fOsm[0]    },
+    { color: COLORS.fusion, label: 'FUSION', row: fFusion[0] },
   ];
   document.getElementById('fresh-rows').innerHTML = freshData.map(({ color, label, row }) => `
     <div class="fresh-row">
@@ -638,12 +764,46 @@ async function loadStats() {
     </div>
   `).join('');
 
-  // Also update sub-lines on count cards
   document.getElementById('sub-gov').textContent = `fetch: ${fmtDate(fGov[0]?.fetched_at)}`;
   document.getElementById('sub-sr').textContent  = `fetch: ${fmtDate(fSr[0]?.fetched_at)}`;
   document.getElementById('sub-osm').textContent = `fetch: ${fmtDate(fOsm[0]?.fetched_at)}`;
 
-  // ── 3. Field coverage ────────────────────────────
+  // ── 3. Overlap (solo / duo / trio) ──────────────
+  setMsg('Analyse des recoupements…');
+  if (cFusion > 0) {
+    const [cSolo, cDuo, cTrio] = await Promise.all([
+      sbCount('radars', withFR('fusion', 'source_count=eq.1')),
+      sbCount('radars', withFR('fusion', 'source_count=eq.2')),
+      sbCount('radars', withFR('fusion', 'source_count=eq.3')),
+    ]);
+    document.getElementById('sub-fusion').textContent =
+      `solo: ${fmt(cSolo)}  duo: ${fmt(cDuo)}  trio: ${fmt(cTrio)}`;
+    const maxO = Math.max(cSolo, cDuo, cTrio, 1);
+    const overlapItems = [
+      { label: 'Solo (1 source)',  count: cSolo, color: COLORS.gov    },
+      { label: 'Duo  (2 sources)', count: cDuo,  color: COLORS.sr     },
+      { label: 'Trio (3 sources)', count: cTrio, color: COLORS.fusion },
+    ];
+    document.getElementById('overlap-rows').innerHTML = overlapItems.map(({ label, count, color }) => `
+      <div class="type-row">
+        <div class="type-label" title="${label}">${label}</div>
+        <div class="type-bar-wrap">
+          <div class="type-bar" style="width:${(count / maxO * 100).toFixed(1)}%;background:${color};opacity:0.8"></div>
+        </div>
+        <div class="type-count">${fmt(count)}</div>
+      </div>
+    `).join('');
+  } else {
+    document.getElementById('sub-fusion').textContent = 'Table non créée';
+    document.getElementById('overlap-rows').innerHTML =
+      `<div class="loading-text" style="line-height:1.6">
+         Table <code>radars</code> absente.<br>
+         Exécute le SQL de <code>supabase/schema.sql</code><br>
+         puis lance <code>consolidate_radars.py</code>.
+       </div>`;
+  }
+
+  // ── 4. Field coverage ────────────────────────────
   setMsg('Analyse de la couverture des champs…');
 
   // Build all count queries in parallel
@@ -654,7 +814,7 @@ async function loadStats() {
       if (col) {
         covTasks.push({
           src, fieldLabel: field.label, col,
-          promise: sbCount(`raw_${src}`, `${col}=not.is.null`),
+          promise: sbCount(`raw_${src}`, withFR(src, `${col}=not.is.null`)),
         });
       }
     }
@@ -679,12 +839,13 @@ async function loadStats() {
   }).join('');
   document.getElementById('cov-body').innerHTML = tbody;
 
-  // ── 4. Type distribution ─────────────────────────
+  // ── 5. Type distribution ─────────────────────────
   setMsg('Distribution des types…');
+  const osmTypeParams = `select=type&limit=5000${countryFR ? '&country=eq.FR' : ''}`;
   const [govTypes, srTypes, osmTypes] = await Promise.all([
     sbSelect('raw_gov', 'select=type&limit=5000'),
     sbSelect('raw_sr',  'select=type&limit=5000'),
-    sbSelect('raw_osm', 'select=type&limit=5000'),
+    sbSelect('raw_osm', osmTypeParams),
   ]);
 
   const typeCounts = {};
@@ -706,9 +867,13 @@ async function loadStats() {
     </div>
   `).join('');
 
-  // ── 5. Done — hide loader & trigger map load ─────
-  document.getElementById('loader').style.display = 'none';
-  refreshMap();
+  // ── 6. Done ──────────────────────────────────────
+  if (reload) {
+    document.getElementById('st-msg').textContent = '';
+  } else {
+    document.getElementById('loader').style.display = 'none';
+    refreshMap();
+  }
 }
 
 // ═══════════════════════════════════════════════════

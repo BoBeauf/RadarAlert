@@ -28,3 +28,6 @@ jobs:
 
       - name: Fetch & sync radars
         run: python scripts/fetch_radars.py
+
+      - name: Consolider les radars (fusion des 3 sources)
+        run: python scripts/consolidate_radars.py
