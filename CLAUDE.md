@@ -15,7 +15,7 @@ Sources publiques                 Backend (GitHub Actions)        App Android
 ─────────────────                 ────────────────────────        ─────────────
 data.gouv.fr         ──┐
 securite-routiere.fr ──┤── fetch_radars.py ──▶ Supabase (PostgreSQL) ──▶ Room (SQLite)
-OpenStreetMap        ──┘          (cron 03h UTC)
+OpenStreetMap        ──┘          (cron dimanche 01h UTC)
 ```
 
 ### Composants principaux
@@ -86,10 +86,12 @@ RadarAlert/
 ├── scripts/
 │   ├── fetch_radars.py            # Pipeline fetch & upsert
 │   └── requirements.txt
+├── dashboard/
+│   └── index.html                 # Dashboard d'audit (single-file, Leaflet + Supabase REST)
 ├── supabase/
 │   └── schema.sql                 # Schéma des 3 tables raw_*
 └── .github/workflows/
-    └── fetch-radars.yml           # Cron GitHub Actions (03h UTC)
+    └── fetch-radars.yml           # Cron GitHub Actions (dimanche 01h UTC)
 ```
 
 ---
@@ -106,15 +108,29 @@ RadarAlert/
 ### Comportement de `fetch_radars.py`
 - **Détection de changement :** hash du contenu → `changed_at` mis à jour seulement si la donnée change
 - **Déduplication :** upsert par batch de 500 enregistrements
-- **Concurrence :** jusqu'à 10 workers parallèles pour l'API SR
+- **Concurrence :** GOV et OSM en parallèle (ThreadPoolExecutor) ; SR en séquentiel (rate-limit IP)
 - **Retry :** 3 tentatives par URL
 - **Validation géographique :** coordonnées France métropole + DOM-TOM
 
+### Spécificités SR (securite-routiere.fr)
+- Fetch séquentiel avec shuffle aléatoire de la liste + jitter 1 s ± 0,5 s entre requêtes
+- Les radars de type **Itinéraires** (IDs `I_xx_xxx`) sont exclus — ce sont des zones de tronçon, pas des points
+- La vitesse est extraite du champ `rulesmesured[].macinename` (pattern `vitesse_vl_70`)
+- Le serveur ferme la connexion après ~300 requêtes → une session TCP suffit sur un run complet
+
 ### CI/CD
-- Cron GitHub Actions : tous les jours à 03h00 UTC
+- Cron GitHub Actions : chaque **dimanche à 01h00 UTC**
 - Timeout du job : 90 minutes
 - Secrets requis : `SUPABASE_SERVICE_ROLE_KEY`
 - URL Supabase : définie dans le workflow (variable `SUPABASE_URL`)
+
+### Dashboard d'audit (`dashboard/index.html`)
+- Fichier unique (Leaflet + MarkerCluster, dark CartoDB tiles) — aucune dépendance locale
+- Connecté à Supabase via l'API REST (pas de SDK) avec clé anon
+- Carte : clustering par source (GOV=bleu, SR=orange, OSM=vert), chargement bbox au pan/zoom (limite 3 000/source)
+- Sidebar : comptages, couverture des champs (% non-null), types, fraîcheur
+- Lancer localement : `python3 -m http.server 8765 --directory dashboard` (ou via `.claude/launch.json`)
+- Nécessite la clé Supabase anon dans `const SUPABASE_KEY = '...'` (ne pas committer)
 
 ---
 
@@ -185,7 +201,7 @@ La clé Supabase côté Android (clé anon publique) est probablement dans `loca
 
 ## Points d'attention
 
-- L'API securite-routiere.fr est lente → workers parallèles + retry + timeout 90 min dans le CI
+- L'API securite-routiere.fr est protégée par un rate-limit IP → fetch séquentiel + shuffle + jitter 1 s ± 0,5 s (≈66 min pour 3206 radars) ; timeout GHA à 90 min
 - Le service foreground doit rester actif même en arrière-plan (batterie / Doze mode Android)
 - L'overlay `SYSTEM_ALERT_WINDOW` nécessite une permission explicite de l'utilisateur (Settings > Apps)
 - Les données OSM et gouvernementales peuvent se chevaucher → gestion de la déduplication importante
