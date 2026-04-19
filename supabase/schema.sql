@@ -58,3 +58,45 @@ CREATE TABLE IF NOT EXISTS raw_osm (
     fetched_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     changed_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ── radars : table consolidée (fusion des 3 sources) ────────
+-- Règles de priorité par champ :
+--   lat/lng, type, speed_*  : SR > GOV > OSM
+--   department              : GOV > SR
+--   city                    : GOV > OSM  (SR n/a)
+--   route, direction        : GOV > SR > OSM
+--   equipment, install_date,
+--   section_length_km       : SR > GOV   (OSM n/a)
+CREATE TABLE IF NOT EXISTS radars (
+    canonical_id      TEXT PRIMARY KEY,   -- 'sr:FE193002' | 'gov:123456' | 'osm:789012'
+    sources           TEXT[] NOT NULL,    -- sous-ensemble de ['gov','sr','osm']
+    gov_id            BIGINT,
+    sr_id             TEXT,
+    osm_id            BIGINT,
+    lat               DOUBLE PRECISION NOT NULL,
+    lng               DOUBLE PRECISION NOT NULL,
+    type              TEXT,
+    speed_car         INT,
+    speed_hgv         INT,
+    department        TEXT,
+    city              TEXT,
+    route             TEXT,
+    direction         TEXT,
+    equipment         TEXT,
+    install_date      TEXT,
+    section_length_km TEXT,
+    source_count      SMALLINT NOT NULL DEFAULT 1,
+    data_hash         TEXT NOT NULL,
+    fetched_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    changed_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS radars_lat_lng  ON radars (lat, lng);
+CREATE INDEX IF NOT EXISTS radars_gov_id   ON radars (gov_id);
+CREATE INDEX IF NOT EXISTS radars_sr_id    ON radars (sr_id);
+
+-- ── Colonne country (ajout après-coup si tables déjà créées) ─
+ALTER TABLE raw_osm ADD COLUMN IF NOT EXISTS country TEXT;
+ALTER TABLE radars  ADD COLUMN IF NOT EXISTS country TEXT;
+CREATE INDEX IF NOT EXISTS raw_osm_country ON raw_osm (country);
+CREATE INDEX IF NOT EXISTS radars_country  ON radars  (country);

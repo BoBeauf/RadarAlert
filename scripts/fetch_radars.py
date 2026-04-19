@@ -132,7 +132,7 @@ def stable_sr_id(raw_id: str) -> int:
             return int(digits) + 200_000_000_000
         return abs(hash(raw_id)) + 100_000_000_000
 
-def fetch_sr_detail(session: requests.Session, raw_id: str) -> dict | None:
+def fetch_sr_detail(session: requests.Session, raw_id: str):
     url = f"{SR_BASE_URL}/radars/{raw_id}"
     for attempt in range(1, SR_RETRIES + 1):
         try:
@@ -258,6 +258,48 @@ def fetch_sr() -> list[dict]:
     return radars
 
 
+# ── Polygone France métropolitaine + Corse ───────────────────
+# ~55 points, précision suffisante pour taguer les radars OSM.
+# Sources des coordonnées : frontières officielles simplifiées.
+
+_FRANCE_METRO = [
+    (51.09,  2.55), (50.87,  1.58), (50.25,  1.63), (49.68, -1.62),
+    (48.66, -1.97), (48.72, -2.98), (48.45, -4.77), (47.88, -4.35),
+    (47.52, -2.75), (47.30, -2.52), (46.68, -1.97), (46.20, -1.55),
+    (45.67, -1.22), (45.27, -1.07), (44.66, -1.22), (44.04, -1.24),
+    (43.56, -1.50), (43.37, -1.77), (43.27, -0.57), (43.12,  0.16),
+    (42.79,  0.72), (42.68,  1.17), (42.50,  1.93), (42.55,  2.45),
+    (42.43,  3.16), (43.02,  3.06), (43.30,  3.53), (43.44,  4.55),
+    (43.37,  5.04), (43.08,  5.83), (43.23,  6.68), (43.49,  7.07),
+    (43.73,  7.42), (44.10,  7.67), (44.72,  6.87), (45.18,  6.75),
+    (45.91,  6.88), (46.38,  6.92), (46.52,  6.18), (47.04,  6.02),
+    (47.49,  7.08), (47.59,  7.58), (48.00,  7.59), (48.48,  7.77),
+    (48.97,  7.96), (49.17,  6.93), (49.55,  6.34), (49.86,  5.82),
+    (50.13,  5.12), (50.36,  4.89), (50.52,  4.16), (50.68,  3.37),
+    (50.79,  2.84), (51.09,  2.55),
+]
+
+def _pip(lat: float, lng: float, poly: list) -> bool:
+    """Ray casting point-in-polygon."""
+    inside = False
+    j = len(poly) - 1
+    for i, (lat_i, lng_i) in enumerate(poly):
+        lat_j, lng_j = poly[j]
+        if (lat_i > lat) != (lat_j > lat):
+            x_int = lng_i + (lat - lat_i) * (lng_j - lng_i) / (lat_j - lat_i)
+            if lng < x_int:
+                inside = not inside
+        j = i
+    return inside
+
+def in_france_metro(lat: float, lng: float) -> bool:
+    """Retourne True si le point est en France métropolitaine (Corse incluse)."""
+    if _pip(lat, lng, _FRANCE_METRO):
+        return True
+    # Corse : bbox simple suffisante (rien d'autre dans ce rectangle)
+    return 41.33 <= lat <= 43.03 and 8.54 <= lng <= 9.57
+
+
 # ── Source OSM (OpenStreetMap / Overpass) ─────────────────────
 
 def fetch_osm() -> list[dict]:
@@ -297,6 +339,8 @@ def fetch_osm() -> list[dict]:
         route     = tags.get("ref", "")
         direction = tags.get("direction", "")
 
+        country = "FR" if in_france_metro(lat, lng) else None
+
         radar = {
             "source_id":       osm_id,
             "lat":             lat,
@@ -307,8 +351,9 @@ def fetch_osm() -> list[dict]:
             "city":            city,
             "route":           route,
             "direction":       direction,
+            "country":         country,
         }
-        radar["data_hash"] = make_hash(lat, lng, radar_type, speed, speed_hgv, city, route, direction)
+        radar["data_hash"] = make_hash(lat, lng, radar_type, speed, speed_hgv, city, route, direction, country)
         radars.append(radar)
 
     log("OSM", f"Terminé en {time.time() - t0:.1f}s — {len(radars)} radars")
